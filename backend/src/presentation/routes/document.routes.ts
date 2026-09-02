@@ -79,8 +79,8 @@ export const documentRoutes: FastifyPluginAsync<DocumentRoutesOptions> = async (
       response: { 200: ListDocumentsReplySchema },
     },
     handler: async (request, reply) => {
-      const { estado, limit, offset } = request.query;
-      const documents = await repository.findMany({ estado, limit, offset });
+      const { estado, estados, limit, offset } = request.query;
+      const documents = await repository.findMany({ estado, estados, limit, offset });
       return reply.code(200).send(documents as DocumentoRegistro[]);
     },
   });
