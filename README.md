@@ -34,24 +34,50 @@ backend/src/
 | `IDocumentRepository` | `SqliteDocumentRepository` (better-sqlite3, WAL) | ✅ Real |
 | `IPdfProcessorProvider` | `PythonPdfProcessorAdapter` (spawn de `scripts/pdf_worker.py`, PyMuPDF/Pillow) | ✅ Real |
 | `IAIExtractorProvider` | `GeminiAIExtractorAdapter` (`@google/genai`, Gemini 2.5 Flash) | ✅ Real |
-| `IRpaInjectionProvider` | `PlaywrightRpaInjectionAdapter` | ⚠️ Placeholder — ver docstring del archivo y `docs/rpa/webix_dump_for_qwen.json` |
+| `IRpaInjectionProvider` | `PlaywrightRpaInjectionAdapter` (default) / `PlaywrightRpaAdapter` (`RPA_MODE=playwright`) | ✅ Real, detrás de flag — ver más abajo |
 | `IExternalSyncProvider` | `GoogleSheetsExternalSyncAdapter` | ⚠️ Placeholder — requiere Service Account de Google |
 
-Los dos adaptadores marcados como placeholder cumplen el contrato exactamente (mismos
-tipos, mismos códigos de error) para que el servidor arranque y el pipeline degrade con
-errores tipados (`ERROR_RPA`, sincronización marcada como fallida) en vez de romperse.
-Sustituirlos por una implementación real no requiere tocar el orquestador ni las rutas.
+El adaptador de sincronización con Sheets, marcado como placeholder, cumple el contrato
+exactamente (mismos tipos, mismos códigos de error) para que el servidor arranque y el
+pipeline degrade con la sincronización marcada como fallida en vez de romperse.
+Sustituirlo por una implementación real no requiere tocar el orquestador ni las rutas.
 
-### `frontend/src/lib/`
+**RPA**: `presentation/server.ts` cablea `PlaywrightRpaInjectionAdapter` por defecto — un
+stub honesto que nunca lanza un navegador y reporta `checkIntranetHealth() === false`.
+`backend/src/infrastructure/rpa/PlaywrightRpaAdapter.ts` es la automatización real contra
+`op_cucs.fwx` (selectores Webix mapeados desde `docs/rpa/webix_dump_for_qwen.json`); se
+activa con `RPA_MODE=playwright` en `.env` (ver `.env.example`), tras
+`npm run rpa:install-browsers` (Chromium de Playwright) y las credenciales/CVEs
+institucionales. No ha sido validada contra la Intranet real — revisar selectores y
+campos antes de usarla en producción.
+
+Un séptimo módulo, **búsqueda semántica local** (`infrastructure/semantic/`,
+`Xenova/bge-m3` vía ONNX Runtime), existe como scaffolding pero está **fuera de alcance
+de `docs/prd.md` v1.0.0-MVP** (§2 excluye modelos locales pesados) y por eso no está
+cableado en el composition root ni incluido en el `tsconfig.json` del backend — ver la
+nota al inicio de `ILocalSemanticProvider.ts` antes de retomarlo.
+
+### `frontend/src/`
 
 ```
-frontend/src/lib/
-├── state/documentState.svelte.ts   Estado reactivo del Split-Screen HITL (Runes: $state/$derived/$effect)
-├── ws/                              Cliente WebSocket con reconexión + contrato de eventos
-├── api/documentApiClient.ts        Cliente HTTP hacia backend/src/presentation/routes
-├── schemas/                         Validación Zod del formulario HITL (cliente)
-└── types.ts                         Espejo estructural de backend/src/contracts/types.ts
+frontend/src/
+├── App.svelte                       Composition root: bandeja PENDIENTE_REVISION + HitlReviewView
+├── main.ts                          Entry point de Vite (monta App.svelte en #app)
+└── lib/
+    ├── components/HitlReviewView.svelte  Split-Screen HITL: visor PDF.js + formulario reactivo
+    ├── state/documentState.svelte.ts     Estado reactivo (Runes: $state/$derived/$effect)
+    ├── ws/                                Cliente WebSocket con reconexión + contrato de eventos
+    ├── api/documentApiClient.ts          Cliente HTTP hacia backend/src/presentation/routes
+    ├── schemas/                           Validación Zod del formulario HITL (cliente)
+    └── types.ts                           Espejo estructural de backend/src/contracts/types.ts
 ```
+
+> `App.svelte` llama a `DocumentApiClient.confirmDocument()` directamente en su
+> `onconfirm`, en vez de `DocumentHitlState.submitConfirmation()`: `HitlReviewView`
+> mantiene su propio `$state` de formulario y no escribe en `hitl.document.draft`.
+> Unificar ambos (que el componente escriba vía `hitl.updateDraftField` y use
+> `hitl.canSubmit`/`hitl.submitConfirmation`) sigue pendiente — ver el comentario al
+> inicio de `App.svelte`.
 
 > `backend` y `frontend` son dos paquetes npm independientes (no hay workspace de tipos
 > compartido todavía); los archivos espejados en `frontend/src/lib/{types.ts,ws/events.ts}`
@@ -67,6 +93,8 @@ npm install
 cp .env.example .env   # completar GEMINI_API_KEY como mínimo
 npm run dev             # tsx watch — http://localhost:3000
 npm run typecheck
+npm run test            # vitest — suite de DocumentWorkflowOrchestrator
+npm run rpa:install-browsers  # solo si vas a usar RPA_MODE=playwright
 ```
 
 Requiere `python3` con `pymupdf` y `pillow` instalados (`pip install pymupdf pillow`)
@@ -77,12 +105,10 @@ para `scripts/pdf_worker.py`. Ver `.env.example` para todas las variables.
 ```bash
 cd frontend
 npm install
-npm run check   # svelte-check sobre el store de runes
+npm run dev      # Vite — http://localhost:5173 (VITE_API_BASE_URL apunta al backend)
+npm run check    # svelte-check
+npm run build    # build de producción
 ```
-
-Este paquete contiene por ahora solo la capa de estado/datos (`src/lib/`); la UI Split-
-Screen (visor `pdf.js` + formulario) es la siguiente entrega y se construirá como
-componentes `.svelte` sobre `documentState.svelte.ts`.
 
 ## Pipeline de almacenamiento (`backend/storage/`)
 
