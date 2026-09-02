@@ -1,25 +1,55 @@
 # Oficialia-Digital-DSA
 
-Middleware de digitalización, extracción por IA y RPA para la Oficialía de Partes de la
-División de Servicios Administrativos (DSA) — Hospital Civil de Guadalajara.
+> **Middleware de Ingesta, Extracción IA y RPA para Gestión Documental**
 
-Automatiza la ingesta de oficios (PDF), su preprocesamiento, la extracción estructurada
-de metadatos con Gemini 2.5 Flash, la validación humana (HITL) en una UI Split-Screen, el
-archivado canónico y la inyección automatizada en la Intranet institucional
-(`op_cucs.fwx`) vía Playwright. Ver [`docs/prd.md`](./docs/prd.md) para el alcance
-completo y los guardrails del proyecto.
+![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22.0.0-000000?style=flat-square&logo=node.js&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.7-000000?style=flat-square&logo=typescript&logoColor=white)
+![Svelte 5](https://img.shields.io/badge/Svelte-5.2-000000?style=flat-square&logo=svelte&logoColor=white)
+![Fastify](https://img.shields.io/badge/Fastify-5.5-000000?style=flat-square&logo=fastify&logoColor=white)
+![License](https://img.shields.io/badge/License-Proprietary-000000?style=flat-square)
 
-## Estructura del repositorio
+---
 
+## 2. System Overview & Architectural Blueprint
+
+**Oficialia-Digital-DSA** es un sistema intermedio de alto rendimiento enfocado en optimizar el flujo de captura de correspondencia de la División de Servicios Administrativos (DSA) del Hospital Civil de Guadalajara. Actúa como puente operativo para automatizar la recepción de oficios, extraer datos estructurados mediante IA multimodal y efectuar la inyección asíncrona de información hacia sistemas institucionales legados (Webix) a través de Automatización Robótica de Procesos (RPA), requiriendo mínima validación humana (HitL).
+
+### Diagrama de Arquitectura
+
+```mermaid
+graph TD
+    subgraph Ingesta [Ingesta de Documentos]
+        A1[Escáner ADF / Watchfolder] -->|PDFs| B(Subproceso Python / PyMuPDF)
+        A2[Web UI Drag & Drop] -->|PDFs| B
+    end
+
+    subgraph Procesamiento [Extracción y Validación]
+        B -->|PDF Optimizado| C[Fastify Orchestrator]
+        C -->|Inferencia Multimodal| D[Gemini API + Zod]
+        D -->|JSON Estructurado| C
+        C <-->|WebSocket Sync| E[Frontend Svelte 5 / HITL]
+    end
+
+    subgraph Persistencia_RPA [Persistencia y Automatización]
+        E -->|Confirmación Manual| C
+        C -->|Transacción WAL| F[(SQLite3)]
+        C -->|Indexación| G[Google Sheets API]
+        C -->|Inyección DOM| H[Playwright TS Worker]
+        H -->|RPA| I[Intranet Institucional Webix]
+    end
 ```
-.
-├── backend/    Servidor Fastify + Clean Architecture (Node.js 22 / TypeScript)
-├── frontend/   UI Split-Screen HITL (Svelte 5 + Runes)
-└── docs/       Especificación de diseño (PRD, contratos, tipos, system prompt) — ver docs/README.md
-```
 
-### `backend/` — Clean Architecture
+## 3. Core Modules & Directory Map
 
+El sistema adopta un patrón de **Monolito Modular** y se administra mediante *npm workspaces*, consolidando orquestación y presentación.
+
+| Módulo / Directorio | Responsabilidad de Dominio |
+| :--- | :--- |
+| `backend/` | Orquestador principal (Fastify) implementado bajo *Clean Architecture*. Contiene contratos, casos de uso e infraestructura (RPA, IA, DB). |
+| `frontend/` | Interfaz de validación *Split-Screen Human-in-the-Loop* (Svelte 5) asistida por WebSockets. |
+| `docs/` | Fuente de verdad conceptual. Alberga PRD, especificación de tipos, diccionario de datos y prompts del sistema. |
+| `storage/` | Watchfolder del ciclo de vida físico de los archivos (estados de entrada, procesamiento, salida y error). |
+| `rpa/` | Volcados DOM e insumos estructurales para el mapeo del Worker RPA (Playwright). |
 ```
 backend/src/
 ├── contracts/        Puertos secundarios + tipos de dominio (fuente de verdad, ver docs/types.md y docs/contracts.md)
@@ -68,69 +98,105 @@ aún no está listo, degrada a `documentos: []` con `modeloEstado` explícito.
 
 ### `frontend/src/`
 
-```
-frontend/src/
-├── App.svelte                       Composition root: bandeja PENDIENTE_REVISION + HitlReviewView
-├── main.ts                          Entry point de Vite (monta App.svelte en #app)
-└── lib/
-    ├── components/HitlReviewView.svelte  Split-Screen HITL: visor PDF.js + formulario reactivo
-    ├── state/documentState.svelte.ts     Estado reactivo (Runes: $state/$derived/$effect)
-    ├── ws/                                Cliente WebSocket con reconexión + contrato de eventos
-    ├── api/documentApiClient.ts          Cliente HTTP hacia backend/src/presentation/routes
-    ├── schemas/                           Validación Zod del formulario HITL (cliente)
-    └── types.ts                           Espejo estructural de backend/src/contracts/types.ts
-```
+## 4. Tech Stack & Standards
 
-> `App.svelte` llama a `DocumentApiClient.confirmDocument()` directamente en su
-> `onconfirm`, en vez de `DocumentHitlState.submitConfirmation()`: `HitlReviewView`
-> mantiene su propio `$state` de formulario y no escribe en `hitl.document.draft`.
-> Unificar ambos (que el componente escriba vía `hitl.updateDraftField` y use
-> `hitl.canSubmit`/`hitl.submitConfirmation`) sigue pendiente — ver el comentario al
-> inicio de `App.svelte`.
+| Categoría | Tecnología y Herramientas |
+| :--- | :--- |
+| **Runtime & Lenguaje** | Node.js (>=22 LTS), TypeScript (5.7), Python 3 (CLI Worker) |
+| **Frameworks Core** | Fastify (Backend), Svelte 5 + Vite (Frontend) |
+| **Persistencia** | SQLite3 (`better-sqlite3` en modo WAL), Local File System |
+| **Inferencia & IA** | Gemini API (`gemini-2.5-flash`), SDK `@google/genai` |
+| **Integración & RPA** | Playwright, Google Sheets API v4 |
+| **Validación de Datos**| Zod (Validación estricta de esquemas I/O) |
+| **Observabilidad** | Pino, Pino-Pretty (Logging estructurado) |
+| **Testing** | Vitest (Pruebas backend), Svelte-Check (Análisis estático UI) |
 
-> `backend` y `frontend` son dos paquetes npm independientes (no hay workspace de tipos
-> compartido todavía); los archivos espejados en `frontend/src/lib/{types.ts,ws/events.ts}`
-> llevan una nota explicando por qué existen duplicados y qué mantener sincronizado.
+## 5. Getting Started & Local Development
 
-## Desarrollo
+### Prerequisites
 
-### Backend
+* Node.js `>= 22.0.0`
+* Python `3.10+` (con librerías `PyMuPDF` y `Pillow` instaladas localmente)
+* Variables de entorno configuradas (`.env` requerido basado en la especificación de `.env.example`)
+
+### Installation & Build
 
 ```bash
-cd backend
+# 1. Instalar dependencias del monorepo
 npm install
-cp .env.example .env   # completar GEMINI_API_KEY como mínimo
-npm run dev             # tsx watch — http://localhost:3000
+
+# 2. Instalar binarios de navegadores para el Worker RPA
+npm run rpa:install-browsers --workspace=backend
+
+# 3. Compilar los módulos de backend y frontend
+npm run build:backend
+npm run build --workspace=frontend
+```
+
+### Run & Debug
+
+Ejecución de perfiles de desarrollo (Terminales concurrentes recomendadas):
+
+```bash
+# Terminal 1: Iniciar el backend con hot-reload (TSX)
+npm run dev:backend
+
+# Terminal 2: Iniciar el frontend (Vite Preview/Dev)
+npm run dev --workspace=frontend
+```
+
+## 6. Testing & Quality Assurance
+
+La calidad de software se garantiza mediante análisis estático estricto y ejecución de pruebas unitarias sobre los casos de uso.
+
+```bash
+# Ejecutar verificación de tipos y linter estático (Svelte + TS)
 npm run typecheck
-npm run test            # vitest — suite de DocumentWorkflowOrchestrator
-npm run rpa:install-browsers  # solo si vas a usar RPA_MODE=playwright
+
+# Ejecutar suite de pruebas unitarias y de integración (Vitest)
+npm run test --workspace=backend
 ```
 
-Requiere `python3` con `pymupdf` y `pillow` instalados (`pip install pymupdf pillow`)
-para `scripts/pdf_worker.py`. Ver `.env.example` para todas las variables.
+## 7. Deployment & CI/CD
 
-### Frontend
+El despliegue está diseñado para infraestructuras *On-Premises* (LAN hospitalaria / VPN). Carece de exposición a internet pública por seguridad de datos.
 
-```bash
-cd frontend
-npm install
-npm run dev      # Vite — http://localhost:5173 (VITE_API_BASE_URL apunta al backend)
-npm run check    # svelte-check
-npm run build    # build de producción
+1. **Compilación de Artefactos:** Construir los estáticos de `frontend/` y transpilar `backend/` hacia el directorio `dist/`.
+2. **Ejecución de Servicios:** Ejecutar `node dist/presentation/server.js` gestionado por un daemon (e.g., `systemd` o `pm2`).
+3. **Persistencia de Archivos:** El árbol de directorios `storage/01_entrada/` debe compartirse a través del protocolo SMB para permitir la ingesta directa desde escáneres departamentales.
+
+## 8. API / Interface Reference
+
+### Contrato de Extracción Core (`MetadatosOficio`)
+
+El orquestador de inferencia utiliza el siguiente contrato de datos (Zod schema en TypeScript) para validar los resultados extraídos por la IA y alimentar la automatización RPA:
+
+```typescript
+{
+  "numero_oficio": "string // Folio extraído y sanitizado",
+  "fecha_emision": "string // Formato YYYY-MM-DD",
+  "procedencia": "enum // 'HCG' o 'Ajena'",
+  "dependencia_area": "string // Mayúsculas normalizadas",
+  "remitente_nombre": "string",
+  "remitente_cargo": "string",
+  "destinatario_nombre": "string",
+  "destinatario_cargo": "string",
+  "asunto": "string // Síntesis continua de 1 a 3 oraciones",
+  "plazo_dias": "number | null // 0 si no aplica",
+  "contiene_datos_sensibles": "boolean // Flag identificador"
+}
 ```
 
-## Pipeline de almacenamiento (`backend/storage/`)
+## 9. Engineering Guidelines & Contributing
 
-```
-storage/
-├── 01_entrada/      Ingesta (watchfolder / drag-drop)
-├── 02_en_proceso/   Documento bloqueado durante preprocesamiento, IA y HITL
-├── 03_procesados/   Repositorio canónico YYYY/MM — PDF + .json espejo
-└── 04_errores/      Documentos con fallos irrecuperables
-```
+* **Sincronización de Documentación (Docs-First):** Cualquier alteración a contratos de dominio, diccionarios de datos o modelos de estados debe actualizarse obligatoriamente primero en los artefactos de diseño (`docs/prd.md`, `docs/types.md`) antes del código fuente.
+* **Patrones Arquitectónicos:** Todo nuevo caso de uso backend debe inyectarse siguiendo directrices de *Clean Architecture* establecidas en el directorio `src/contracts`.
+* **Políticas de Repositorio:** El repositorio aplica políticas estrictas de *Conventional Commits*. Las desviaciones semánticas deberán resolverse en el proceso de Pull Request.
 
-## Documentación de diseño
+## 10. License & Maintenance
 
+* **Licencia:** Propietaria / Uso Interno Restringido.
+* **Mantenimiento y Gobernanza:** Propiedad intelectual de la División de Servicios Administrativos (DSA) del Hospital Civil de Guadalajara. Mantenimiento y control operativo a cargo del equipo de Arquitectura de Software Institucional. Prohibida su divulgación o implementación externa.
 Ver [`docs/README.md`](./docs/README.md) — PRD, contratos de los 7 puertos, modelo de
 dominio y el system prompt de extracción, junto con la tabla de qué archivo de código
 implementa cada uno.
