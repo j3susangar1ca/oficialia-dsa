@@ -149,3 +149,29 @@ export const ListDocumentsQuerystringSchema = z.object({
 });
 
 export const ListDocumentsReplySchema = z.array(DocumentoRegistroReplySchema);
+
+// ---------------------------------------------------------------------------
+// GET /documents/:id/related — Puerto 7 (ILocalSemanticProvider, P1)
+// ---------------------------------------------------------------------------
+
+export const RelatedDocumentsQuerystringSchema = z.object({
+  limite: z.coerce.number().int().positive().max(50).optional(),
+  umbralVinculacion: z.coerce.number().min(0).max(1).optional(),
+});
+
+export const DocumentoRelacionadoSchema = z.object({
+  documentoId: z.string().uuid(),
+  nombreArchivoCanonico: z.string().nullable(),
+  numeroOficio: z.string().nullable(),
+  dependenciaArea: z.string().nullable(),
+  asunto: z.string().nullable(),
+  similitudScore: z.number(),
+  esCandidatoVinculacion: z.boolean(),
+});
+
+export const RelatedDocumentsReplySchema = z.object({
+  documentos: z.array(DocumentoRelacionadoSchema),
+  totalVectoresComparados: z.number().int().nonnegative(),
+  duracionMs: z.number().int().nonnegative(),
+  modeloEstado: z.enum(['NO_INICIALIZADO', 'CARGANDO', 'LISTO', 'ERROR_INFERENCIA']),
+});

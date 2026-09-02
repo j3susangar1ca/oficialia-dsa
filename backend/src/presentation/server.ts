@@ -6,7 +6,7 @@
  * Responsabilidades de este archivo, y SOLO estas:
  *   1. Registrar los plugins de transporte (@fastify/multipart, @fastify/websocket)
  *      y el type provider de Zod.
- *   2. Instanciar los seis adaptadores de infraestructura concretos.
+ *   2. Instanciar los siete adaptadores de infraestructura concretos.
  *   3. Inyectarlos manualmente (constructor injection) en el
  *      `DocumentWorkflowOrchestrator` — sin contenedor de DI, sin decoradores.
  *   4. Montar las rutas HTTP (`document.routes.ts`) y el endpoint WebSocket,
@@ -29,6 +29,7 @@ import { PythonPdfProcessorAdapter } from '../infrastructure/pdf/PythonPdfProces
 import { SqliteDocumentRepository } from '../infrastructure/persistence/SqliteDocumentRepository';
 import { PlaywrightRpaAdapter } from '../infrastructure/rpa/PlaywrightRpaAdapter';
 import { PlaywrightRpaInjectionAdapter } from '../infrastructure/rpa/PlaywrightRpaInjectionAdapter';
+import { LocalSemanticMatcherAdapter } from '../infrastructure/semantic/LocalSemanticMatcherAdapter';
 import { LocalFileStorageAdapter } from '../infrastructure/storage/LocalFileStorageAdapter';
 import { GoogleSheetsExternalSyncAdapter } from '../infrastructure/sync/GoogleSheetsExternalSyncAdapter';
 import { MetadatosOficioSchema } from '../contracts/schemas/metadatosOficio.schema';
@@ -66,7 +67,7 @@ export async function buildServer() {
   await fastify.register(websocket);
 
   // ===========================================================================
-  // COMPOSITION ROOT — Inyección de Dependencias manual de los 6 puertos
+  // COMPOSITION ROOT — Inyección de Dependencias manual de los 7 puertos
   // ===========================================================================
   const eventsHub = new DocumentEventsHub();
 
@@ -98,6 +99,14 @@ export async function buildServer() {
 
   const externalSync = new GoogleSheetsExternalSyncAdapter();
 
+  // Puerto 7 (P1, docs/prd.md §2.2): búsqueda semántica local. Reutiliza la misma
+  // conexión/archivo SQLite que `repository` (better-sqlite3 es síncrono, un solo hilo
+  // por conexión). Instanciarlo es barato — el modelo ONNX (~cientos de MB) solo se
+  // carga en la primera llamada real a indexDocument()/searchSimilar() (ver
+  // `initialize()` perezoso en LocalSemanticMatcherAdapter), así que no retrasa el
+  // arranque del servidor ni bloquea el health-check.
+  const semanticProvider = new LocalSemanticMatcherAdapter(repository.getRawDatabase());
+
   const orchestrator = new DocumentWorkflowOrchestrator(
     storage,
     repository,
@@ -105,7 +114,8 @@ export async function buildServer() {
     aiExtractor,
     rpaInjection,
     externalSync,
-    eventsHub // WorkflowEventsListener — retransmite el avance por WebSocket
+    eventsHub, // WorkflowEventsListener — retransmite el avance por WebSocket
+    semanticProvider
   );
 
   // ===========================================================================
@@ -130,6 +140,9 @@ export async function buildServer() {
     status: 'ok',
     intranet: await rpaInjection.checkIntranetHealth(),
     sheets: await externalSync.checkConnection(),
+    // No dispara la carga del modelo — solo refleja si ya se inicializó por una
+    // indexación/búsqueda previa (ver comentario en la instanciación de semanticProvider).
+    semantic: semanticProvider.modeloEstado,
   }));
 
   // --- Manejo centralizado de errores no capturados por las rutas -----------

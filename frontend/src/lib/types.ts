@@ -97,6 +97,29 @@ export interface DocumentoRegistro {
   version: number;
 }
 
+// ---------------------------------------------------------------------------
+// Puerto 7 (ILocalSemanticProvider, P1 — ver docs/prd.md §2.2 / docs/contracts.md)
+// ---------------------------------------------------------------------------
+
+export type ModeloEstado = 'NO_INICIALIZADO' | 'CARGANDO' | 'LISTO' | 'ERROR_INFERENCIA';
+
+export interface DocumentoRelacionado {
+  documentoId: string;
+  nombreArchivoCanonico: string | null;
+  numeroOficio: string | null;
+  dependenciaArea: string | null;
+  asunto: string | null;
+  similitudScore: number;
+  esCandidatoVinculacion: boolean;
+}
+
+export interface RelatedDocumentsResult {
+  documentos: DocumentoRelacionado[];
+  totalVectoresComparados: number;
+  duracionMs: number;
+  modeloEstado: ModeloEstado;
+}
+
 /** Estados en los que el pipeline de salida sigue corriendo en el servidor: la UI se bloquea. */
 export const LOCKED_STATES: ReadonlySet<DocumentoEstado> = new Set<DocumentoEstado>(['APROBADO_HITL', 'EN_RPA']);
 

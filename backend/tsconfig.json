@@ -21,9 +21,5 @@
     "noUnusedParameters": true
   },
   "include": ["src/**/*.ts"],
-  "exclude": [
-    "node_modules",
-    "dist",
-    "src/infrastructure/semantic/**"
-  ]
+  "exclude": ["node_modules", "dist"]
 }

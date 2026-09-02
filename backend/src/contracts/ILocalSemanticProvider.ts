@@ -6,20 +6,16 @@
  *
  * Cumplimiento: LGPDPPSO — Procesamiento 100% local, sin llamadas a APIs externas.
  *
- * ⚠️ FUERA DE ALCANCE DE `docs/prd.md` v1.0.0-MVP — NO forma parte de los 6 puertos
- * secundarios documentados en `docs/README.md`/`docs/contracts.md` ni está registrado
- * en el composition root (`presentation/server.ts`). PRD §2 (OUT-OF-SCOPE) excluye
- * explícitamente "modelos locales pesados de OCR/LLM"; bge-m3 vía ONNX Runtime entra en
- * esa misma categoría de costo/mantenimiento aunque el caso de uso (vinculación
- * semántica de oficios relacionados) no esté ahí enumerado.
+ * Puerto secundario nº 7, añadido en Fase Complementaria P1 (ver `docs/prd.md` §2.2 y
+ * `docs/contracts.md` §"Puerto 7"): búsqueda y vinculación semántica de oficios
+ * relacionados, complementaria a la detección exacta por folio/hash de §2.2. No genera
+ * ni redacta texto (eso sigue siendo exclusivo de Gemini 2.5 Flash) — solo vectoriza y
+ * compara por similitud coseno, 100% en el proceso Node del backend.
  *
- * Se conserva como scaffolding para una posible Fase 2 (detección de oficios
- * relacionados más allá del match exacto por hash/folio de §2.2), pero requiere volver
- * a pasar por el PRD antes de cablearse: añadir el puerto a la tabla de
- * `docs/contracts.md`, decidir el costo de arranque en frío del modelo (~cientos de MB)
- * en el servidor LAN de la DSA, y exponer la búsqueda en rutas/UI. Ver
- * `backend/src/infrastructure/persistence/embeddings_schema.sql` para el esquema
- * SQLite asociado (tampoco incluido en `schema.sql` por defecto).
+ * Implementación de referencia: `LocalSemanticMatcherAdapter` (mismo directorio).
+ * Se cablea en el composition root (`presentation/server.ts`) sobre la misma conexión
+ * SQLite que `SqliteDocumentRepository`. Esquema asociado:
+ * `backend/src/infrastructure/persistence/embeddings_schema.sql`.
  */
 
 // ==========================================

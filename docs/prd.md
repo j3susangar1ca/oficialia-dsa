@@ -91,12 +91,17 @@
 ### 2.2. In-Scope (P1: Fase Complementaria)
 * **Detección de Folios Duplicados:** Alerta en UI si el `numero_oficio` ya existe registrado en la base SQLite local.
 * **Manejo de Reintentos de RPA:** Si la Intranet falla por timeout o sesión expirada, mantener el registro en estado `ERROR_RPA` y permitir reintento manual con un clic sin reescanear ni reextraer metadatos.
+* **Búsqueda y Vinculación Semántica Local de Oficios Relacionados:** tras cada confirmación HITL, indexar el oficio (dependencia + remitente + asunto) con un modelo de embeddings ejecutado 100% en el servidor local de la DSA (`Xenova/bge-m3` sobre ONNX Runtime — sin llamadas a APIs externas, conforme a LGPDPPSO). Permite sugerir al capturista oficios relacionados por similitud semántica (mismo asunto/remitente redactado de forma distinta), complementando la detección exacta por folio/hash del punto anterior. Puerto secundario: `ILocalSemanticProvider` (ver `contracts.md` §7 y `embeddings_schema.sql`). No bloqueante: si el modelo no ha terminado de cargar o falla la inferencia, la búsqueda retorna vacío en vez de interrumpir el pipeline principal.
 
 ### 2.3. Out-of-Scope (Límites Estrictos)
 * **Sustitución de Sistemas Oficiales:** El sistema no almacena de forma definitiva con validez legal independiente a la Intranet del hospital.
 * **Firma Electrónica:** No valida certificados de firma electrónica avanzada.
 * **Redacción Automatizada:** No redacta respuestas a solicitudes.
 * **OCR Local:** No se ejecutan motores OCR locales pesados en el servidor de la DSA.
+* **Generación de Texto por LLM Local:** el modelo de embeddings de §2.2 (`bge-m3`) se usa
+  exclusivamente para vectorizar y comparar texto por similitud — no genera, resume ni
+  redacta contenido; esa función sigue exclusivamente en Gemini 2.5 Flash (§2.1) y sigue
+  fuera de alcance para cualquier modelo local.
 
 ---
 
@@ -295,6 +300,10 @@ export type MetadatosOficio = z.infer<typeof MetadatosOficioSchema>;
 * **Frontend y Visor HITL:** Svelte 5 asistido por Tailwind CSS y `pdfjs-dist` para el renderizado acelerado por hardware en elementos `<canvas>`.
 * **Persistencia y Estado:** SQLite en modo WAL (Write-Ahead Logging) administrado de forma síncrona/segura con `better-sqlite3`.
 * **RPA de Inyección:** Playwright nativo en TypeScript, configurado con selectores resistentes para la interfaz Webix del módulo `op_cucs.fwx`.
+* **Búsqueda Semántica Local (P1):** `@xenova/transformers` ejecutando `Xenova/bge-m3`
+  (ONNX Runtime, cuantizado) dentro del propio proceso Node del backend — sin servicio
+  externo ni llamada de red — con los vectores persistidos en la misma base SQLite
+  (`documentos_embeddings`, ver `embeddings_schema.sql`).
 
 ### 5.2. Estructura del Almacenamiento Local (Pipeline Watchfolder)
 

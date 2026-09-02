@@ -22,6 +22,7 @@ import type { IPdfProcessorProvider } from '../contracts/IPdfProcessorProvider';
 import type { IAIExtractorProvider } from '../contracts/IAIExtractorProvider';
 import type { IRpaInjectionProvider } from '../contracts/IRpaInjectionProvider';
 import type { IExternalSyncProvider } from '../contracts/IExternalSyncProvider';
+import type { ILocalSemanticProvider, ResultadoBusquedaSemantica } from '../contracts/ILocalSemanticProvider';
 
 /**
  * Observador opcional de eventos de pipeline. `server.ts` inyecta aquí el
@@ -41,7 +42,13 @@ export class DocumentWorkflowOrchestrator {
     private readonly aiExtractor: IAIExtractorProvider,
     private readonly rpaInjection: IRpaInjectionProvider,
     private readonly externalSync: IExternalSyncProvider,
-    private readonly events?: WorkflowEventsListener
+    private readonly events?: WorkflowEventsListener,
+    /**
+     * Puerto 7 (P1, `docs/prd.md` §2.2) — opcional: si se omite, la indexación y
+     * búsqueda semántica se saltan silenciosamente (el resto del pipeline no depende
+     * de él). `server.ts` lo inyecta siempre que `ILocalSemanticProvider` esté cableado.
+     */
+    private readonly semanticProvider?: ILocalSemanticProvider
   ) {}
 
   /**
@@ -211,7 +218,51 @@ export class DocumentWorkflowOrchestrator {
       console.error(`[BackgroundWorkerError] Fallo en pipeline de salida del documento ${documentId}:`, err);
     });
 
+    // 5. Indexación semántica en segundo plano (Puerto 7, P1 — no bloqueante: un fallo
+    //    de inferencia local nunca debe impedir que el documento llegue a RPA/Sheets).
+    this.indexForSemanticSearch(documentId, validatedMetadata).catch((err) => {
+      console.error(`[SemanticIndexError] Fallo al indexar el documento ${documentId}:`, err);
+    });
+
     return currentRecord;
+  }
+
+  /** Puerto 7 (P1) — indexa dependencia/remitente/asunto para búsqueda semántica posterior. */
+  private async indexForSemanticSearch(documentId: string, metadata: MetadatosOficio): Promise<void> {
+    if (!this.semanticProvider) return;
+    await this.semanticProvider.indexDocument(documentId, {
+      dependenciaArea: metadata.dependenciaArea,
+      remitenteNombre: metadata.remitenteNombre,
+      asunto: metadata.asunto,
+    });
+  }
+
+  /**
+   * Puerto 7 (P1) — sugiere oficios relacionados por similitud semántica al documento
+   * dado (usa sus metadatos validados o, en su defecto, los extraídos por IA). Nunca
+   * lanza: si el puerto no está cableado o el modelo aún no está listo, retorna un
+   * resultado vacío (mismo contrato de degradación que `ILocalSemanticProvider.searchSimilar`).
+   */
+  async findRelatedDocuments(
+    documentId: string,
+    options?: { limite?: number; umbralVinculacion?: number }
+  ): Promise<ResultadoBusquedaSemantica> {
+    if (!this.semanticProvider) {
+      return { documentos: [], totalVectoresComparados: 0, duracionMs: 0, modeloEstado: 'NO_INICIALIZADO' };
+    }
+
+    const document = await this.repository.findById(documentId);
+    const metadata = document?.metadatosValidados ?? document?.metadatosExtraidos;
+    if (!document || !metadata) {
+      return { documentos: [], totalVectoresComparados: 0, duracionMs: 0, modeloEstado: this.semanticProvider.modeloEstado };
+    }
+
+    return this.semanticProvider.searchSimilar({
+      textoConsulta: `${metadata.dependenciaArea} ${metadata.remitenteNombre} ${metadata.asunto}`,
+      excluirDocumentoId: documentId,
+      limite: options?.limite,
+      umbralVinculacion: options?.umbralVinculacion,
+    });
   }
 
   /**

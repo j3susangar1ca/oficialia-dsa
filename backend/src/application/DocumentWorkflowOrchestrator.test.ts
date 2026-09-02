@@ -27,6 +27,7 @@ import type { IPdfProcessorProvider } from '../contracts/IPdfProcessorProvider';
 import type { IAIExtractorProvider } from '../contracts/IAIExtractorProvider';
 import type { IRpaInjectionProvider } from '../contracts/IRpaInjectionProvider';
 import type { IExternalSyncProvider } from '../contracts/IExternalSyncProvider';
+import type { ILocalSemanticProvider, ResultadoBusquedaSemantica } from '../contracts/ILocalSemanticProvider';
 
 // Soporte para entornos donde crypto.randomUUID no esté globalmente disponible.
 if (!(globalThis as any).crypto?.randomUUID) {
@@ -150,6 +151,11 @@ describe('DocumentWorkflowOrchestrator', () => {
   let aiExtractor: Mocked<IAIExtractorProvider>;
   let rpa: Mocked<IRpaInjectionProvider>;
   let externalSync: Mocked<IExternalSyncProvider>;
+  // `modeloEstado` es una propiedad de solo lectura, no un método — se excluye del
+  // mapeo genérico `Mocked<T>` (que asume que toda clave es invocable).
+  let semanticProvider: Omit<Mocked<ILocalSemanticProvider>, 'modeloEstado'> & {
+    modeloEstado: ILocalSemanticProvider['modeloEstado'];
+  };
 
   const pdfBuffer = new Uint8Array([1, 2, 3]);
 
@@ -356,13 +362,47 @@ describe('DocumentWorkflowOrchestrator', () => {
     externalSync.appendBatchRows.mockResolvedValue([]);
     externalSync.checkConnection.mockResolvedValue(true);
 
+    // ----------------------------------------------------------------
+    // Mock ILocalSemanticProvider (Puerto 7, P1)
+    // ----------------------------------------------------------------
+    semanticProvider = {
+      modeloEstado: 'LISTO',
+      initialize: vi.fn(),
+      generateEmbedding: vi.fn(),
+      indexDocument: vi.fn(),
+      batchIndex: vi.fn(),
+      searchSimilar: vi.fn(),
+      removeEmbedding: vi.fn(),
+      countEmbeddings: vi.fn()
+    };
+
+    semanticProvider.initialize.mockResolvedValue(undefined);
+    semanticProvider.indexDocument.mockResolvedValue({
+      id: 1,
+      documentoId: 'doc-1',
+      vectorBlob: Buffer.alloc(0),
+      dimension: 1024,
+      documentString: '',
+      contentHash: '',
+      creadoEn: nowIso
+    });
+    semanticProvider.searchSimilar.mockResolvedValue({
+      documentos: [],
+      totalVectoresComparados: 0,
+      duracionMs: 0,
+      modeloEstado: 'LISTO'
+    } satisfies ResultadoBusquedaSemantica);
+    semanticProvider.countEmbeddings.mockReturnValue(0);
+
     orchestrator = new DocumentWorkflowOrchestrator(
       storage as unknown as IFileStorageProvider,
       repository as unknown as IDocumentRepository,
       pdfProcessor as unknown as IPdfProcessorProvider,
       aiExtractor as unknown as IAIExtractorProvider,
       rpa as unknown as IRpaInjectionProvider,
-      externalSync as unknown as IExternalSyncProvider
+      externalSync as unknown as IExternalSyncProvider,
+      undefined, // WorkflowEventsListener — no usado en esta suite
+      semanticProvider as unknown as ILocalSemanticProvider
     );
 
     // Silencia el console.error del orquestador durante el escenario de duplicado /
@@ -699,5 +739,111 @@ describe('DocumentWorkflowOrchestrator', () => {
         metadata: validMetadata
       })
     );
+  });
+
+  // ------------------------------------------------------------------
+  // Puerto 7 (ILocalSemanticProvider, P1): indexación en segundo plano tras HITL
+  // ------------------------------------------------------------------
+
+  it('debe indexar el documento en el proveedor semántico tras confirmar HITL, sin bloquear la respuesta', async () => {
+    const pendingDoc = buildDocument({
+      id: 'doc-1',
+      estado: 'PENDIENTE_REVISION',
+      version: 2,
+      rutaArchivoActual: 'storage/02_en_proceso/doc-1.pdf',
+      metadatosExtraidos: validMetadata
+    });
+
+    repository.findById.mockResolvedValue(pendingDoc);
+
+    await orchestrator.confirmHitlAndExecutePipeline('doc-1', validMetadata, 'USR-CAPTURISTA-01', 2);
+
+    await vi.waitFor(() => expect(semanticProvider.indexDocument).toHaveBeenCalledTimes(1));
+
+    expect(semanticProvider.indexDocument).toHaveBeenCalledWith('doc-1', {
+      dependenciaArea: validMetadata.dependenciaArea,
+      remitenteNombre: validMetadata.remitenteNombre,
+      asunto: validMetadata.asunto
+    });
+  });
+
+  it('un fallo del proveedor semántico no debe impedir que RPA/Sheets se completen', async () => {
+    const pendingDoc = buildDocument({
+      id: 'doc-1',
+      estado: 'PENDIENTE_REVISION',
+      version: 2,
+      rutaArchivoActual: 'storage/02_en_proceso/doc-1.pdf',
+      metadatosExtraidos: validMetadata
+    });
+
+    repository.findById.mockResolvedValue(pendingDoc);
+    semanticProvider.indexDocument.mockRejectedValue(new Error('[LocalSemanticMatcher] modelo no está listo'));
+
+    await orchestrator.confirmHitlAndExecutePipeline('doc-1', validMetadata, 'USR-CAPTURISTA-01', 2);
+
+    await vi.waitFor(() => expect(repository.updateRpaExecution).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(externalSync.appendDocumentRow).toHaveBeenCalledTimes(1));
+
+    expect(repository.updateRpaExecution).toHaveBeenCalledWith('doc-1', rpaSuccess, 'COMPLETADO', expect.any(Number));
+  });
+
+  // ------------------------------------------------------------------
+  // Puerto 7 (ILocalSemanticProvider, P1): búsqueda de oficios relacionados
+  // ------------------------------------------------------------------
+
+  it('findRelatedDocuments debe delegar en el proveedor semántico usando los metadatos validados', async () => {
+    const completedDoc = buildDocument({
+      id: 'doc-1',
+      estado: 'COMPLETADO',
+      metadatosValidados: validMetadata,
+      metadatosExtraidos: validMetadata
+    });
+    repository.findById.mockResolvedValue(completedDoc);
+
+    const related: ResultadoBusquedaSemantica = {
+      documentos: [
+        {
+          documentoId: 'doc-2',
+          nombreArchivoCanonico: null,
+          numeroOficio: 'DSA-1043-2026',
+          dependenciaArea: validMetadata.dependenciaArea,
+          asunto: 'ASUNTO SIMILAR',
+          similitudScore: 0.91,
+          esCandidatoVinculacion: true
+        }
+      ],
+      totalVectoresComparados: 5,
+      duracionMs: 12,
+      modeloEstado: 'LISTO'
+    };
+    semanticProvider.searchSimilar.mockResolvedValue(related);
+
+    const result = await orchestrator.findRelatedDocuments('doc-1');
+
+    expect(semanticProvider.searchSimilar).toHaveBeenCalledWith(
+      expect.objectContaining({ excluirDocumentoId: 'doc-1' })
+    );
+    expect(result).toEqual(related);
+  });
+
+  it('findRelatedDocuments debe degradar a resultado vacío sin lanzar cuando el proveedor no está cableado', async () => {
+    const orchestratorSinSemantica = new DocumentWorkflowOrchestrator(
+      storage as unknown as IFileStorageProvider,
+      repository as unknown as IDocumentRepository,
+      pdfProcessor as unknown as IPdfProcessorProvider,
+      aiExtractor as unknown as IAIExtractorProvider,
+      rpa as unknown as IRpaInjectionProvider,
+      externalSync as unknown as IExternalSyncProvider
+    );
+
+    const result = await orchestratorSinSemantica.findRelatedDocuments('doc-1');
+
+    expect(result).toEqual({
+      documentos: [],
+      totalVectoresComparados: 0,
+      duracionMs: 0,
+      modeloEstado: 'NO_INICIALIZADO'
+    });
+    expect(repository.findById).not.toHaveBeenCalled();
   });
 });
