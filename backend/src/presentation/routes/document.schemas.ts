@@ -147,6 +147,19 @@ export const RetryRpaBodySchema = z.object({
 
 export const ListDocumentsQuerystringSchema = z.object({
   estado: DocumentoRegistroReplySchema.shape.estado.optional(),
+  /**
+   * Filtro por múltiples estados a la vez (ej. `?estados=ERROR_PREPROCESO,ERROR_EXTRACCION,ERROR_RPA`
+   * para una pestaña "Errores" en la bandeja). El repositorio ya soporta `estados` en
+   * `DocumentQueryFilters`; solo faltaba exponerlo en la querystring HTTP. Es un simple
+   * `.transform()` de entrada (string → array), válido aquí porque este schema solo se usa
+   * para VALIDAR el request, nunca para serializar el reply (ver nota en
+   * `DocumentoRegistroReplySchema` sobre por qué ese sí debe evitar transforms).
+   */
+  estados: z
+    .string()
+    .transform((val) => val.split(',').map((s) => s.trim()).filter(Boolean))
+    .pipe(z.array(DocumentoRegistroReplySchema.shape.estado).min(1))
+    .optional(),
   limit: z.coerce.number().int().positive().max(200).default(50),
   offset: z.coerce.number().int().nonnegative().default(0),
 });

@@ -10,7 +10,7 @@
  */
 
 import type { MetadatosOficioDraft } from '../schemas/metadatosOficio.schema';
-import type { DocumentoRegistro, RelatedDocumentsResult } from '../types';
+import type { DocumentoEstado, DocumentoRegistro, RelatedDocumentsResult } from '../types';
 
 export class DocumentApiError extends Error {
   constructor(
@@ -58,8 +58,25 @@ export class DocumentApiClient {
     return (await response.json()) as DocumentoRegistro;
   }
 
-  async listPending(): Promise<DocumentoRegistro[]> {
-    const response = await fetch(`${this.options.baseUrl}/documents?estado=PENDIENTE_REVISION`);
+  /**
+   * Bandeja de trabajo. Sin `estado`/`estados`, devuelve todos los documentos (hasta
+   * `limit`) — usado por la pestaña "Todos" y por los grupos de `estadoMeta.ts`
+   * (`BANDEJA_GRUPOS`), que filtran por uno o varios `DocumentoEstado` a la vez.
+   */
+  async listDocuments(params?: {
+    estado?: DocumentoEstado;
+    estados?: DocumentoEstado[];
+    limit?: number;
+    offset?: number;
+  }): Promise<DocumentoRegistro[]> {
+    const query = new URLSearchParams();
+    if (params?.estado) query.set('estado', params.estado);
+    if (params?.estados?.length) query.set('estados', params.estados.join(','));
+    if (params?.limit !== undefined) query.set('limit', String(params.limit));
+    if (params?.offset !== undefined) query.set('offset', String(params.offset));
+    const suffix = query.toString() ? `?${query.toString()}` : '';
+
+    const response = await fetch(`${this.options.baseUrl}/documents${suffix}`);
     if (!response.ok) {
       const { error, code } = await parseErrorBody(response);
       throw new DocumentApiError(error, response.status, code);

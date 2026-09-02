@@ -162,7 +162,10 @@ export class DocumentHitlState {
   private socket: DocumentSocket | null = null;
   private submitLockUntil = 0;
 
-  constructor(private readonly api: DocumentApiClient) {
+  constructor(
+    private readonly api: DocumentApiClient,
+    private readonly options: { onServerEvent?: (event: DocumentServerEvent) => void } = {}
+  ) {
     // ------------------------------------------------------------------
     // $effect — Sincronización con el WebSocket
     // ------------------------------------------------------------------
@@ -170,10 +173,17 @@ export class DocumentHitlState {
     // destruirlo (la función de retorno de $effect es su cleanup). No depende de
     // `document.id`: el mismo socket permanece abierto entre documentos abiertos en la
     // bandeja — los eventos se filtran por id dentro de `handleServerEvent`.
+    //
+    // `options.onServerEvent` recibe TODOS los eventos (sin filtrar por documento
+    // abierto) antes de `handleServerEvent` — permite que la vista de bandeja
+    // (lista de documentos) se refresque en vivo sin abrir un segundo WebSocket.
     $effect(() => {
       this.socket = new DocumentSocket({
         url: this.api.wsUrl,
-        onEvent: (event) => this.handleServerEvent(event),
+        onEvent: (event) => {
+          this.options.onServerEvent?.(event);
+          this.handleServerEvent(event);
+        },
         onStatusChange: (status) => {
           this.uiStatus.wsStatus = status;
         },
@@ -341,8 +351,11 @@ export class DocumentHitlState {
 }
 
 /** Instancia y registra el store en el árbol de componentes actual (ver docstring superior). */
-export function createDocumentHitlState(api: DocumentApiClient): DocumentHitlState {
-  const state = new DocumentHitlState(api);
+export function createDocumentHitlState(
+  api: DocumentApiClient,
+  options?: { onServerEvent?: (event: DocumentServerEvent) => void }
+): DocumentHitlState {
+  const state = new DocumentHitlState(api, options);
   setContext(CONTEXT_KEY, state);
   return state;
 }

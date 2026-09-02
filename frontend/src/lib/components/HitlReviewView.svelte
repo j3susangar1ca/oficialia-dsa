@@ -1,260 +1,182 @@
 <script lang="ts">
   // ============================================================
-  // HitlReviewView.svelte
-  // Oficialia-Digital-DSA — Validación Human-in-the-Loop (HITL)
-  // Pantalla dividida: Visor PDF.js (izq) + Formulario reactivo (der)
+  // HitlReviewView.svelte — Oficialia-Digital-DSA
+  // Validación Human-in-the-Loop (HITL): Split-Screen — visor PDF.js (izq) +
+  // formulario reactivo (der). Consume `DocumentHitlState` directamente (en vez de
+  // mantener su propio `$state` de formulario/validación duplicado): un solo borrador
+  // (`hitl.document.draft`), una sola validación (`hitl.formValidation`, Zod) y una sola
+  // puerta de salida (`hitl.submitConfirmation`) compartidas con el resto de la app.
   // Svelte 5 (Runes) · TypeScript · Tailwind CSS · pdfjs-dist
   // ============================================================
 
-  import { onMount, onDestroy } from "svelte";
-  import * as pdfjsLib from "pdfjs-dist";
-  // El worker se resuelve como URL de asset en Vite.
-  // Alternativa (sin bundler): pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
-  import PdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+  import { onMount, onDestroy } from 'svelte';
+  import * as pdfjsLib from 'pdfjs-dist';
+  import PdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+
+  import type { DocumentHitlState } from '$lib/state/documentState.svelte';
+  import type { DocumentApiClient } from '$lib/api/documentApiClient';
+  import type { DocumentoRelacionado, ModeloEstado } from '$lib/types';
+  import type { MetadatosOficioDraft } from '$lib/schemas/metadatosOficio.schema';
+  import { estadoMeta, formatRelativeTime } from '$lib/estadoMeta';
 
   pdfjsLib.GlobalWorkerOptions.workerSrc = PdfWorker;
 
-  // -----------------------------------------
-  // Tipos de dominio (ver types.ts)
-  // -----------------------------------------
-  export type IngestaOrigen = "SCANNER_ADF" | "WEB_DRAG_DROP";
-  export type ProcedenciaTipo = "HCG" | "Ajena";
-
-  export interface MetadatosOficio {
-    numeroOficio: string;
-    fechaEmision: string; // YYYY-MM-DD
-    procedencia: ProcedenciaTipo;
-    dependenciaArea: string;
-    remitenteNombre: string;
-    remitenteCargo: string;
-    destinatarioNombre: string;
-    destinatarioCargo: string;
-    asunto: string;
-    plazoDias: number | null;
-    contieneDatosSensibles: boolean;
-  }
-
-  export interface DocumentoRegistro {
-    id: string;
-    nombreArchivoOriginal: string;
-    estado: string;
-    metadatosExtraidos: MetadatosOficio | null;
-    // ... resto de campos omitidos por brevedad en la vista HITL
-  }
-
-  // -----------------------------------------
-  // Props del componente
-  // -----------------------------------------
-
   interface Props {
-    /** Documento a revisar (debe tener metadatosExtraidos ya poblados). */
-    documento: DocumentoRegistro;
-    /**
-     * Fuente del PDF: ArrayBuffer precargado o URL de streaming (blob:/http:).
-     * El orquestador Fastify expone el archivo en `rutaArchivoActual`.
-     */
-    src: ArrayBuffer | string;
-    /** Callback de confirmación: recibe los metadatos validados por el humano. */
-    onconfirm?: (validados: MetadatosOficio) => void | Promise<void>;
-    /** Callback opcional al cancelar/descartar la revisión. */
+    hitl: DocumentHitlState;
+    api: DocumentApiClient;
+    userId: string;
     oncancel?: () => void;
   }
 
-  let { documento, src, onconfirm, oncancel }: Props = $props();
+  let { hitl, api, userId, oncancel }: Props = $props();
+
+  // Atajos tipados: el documento y borrador siempre existen mientras este componente
+  // está montado (App.svelte solo lo renderiza cuando ambos son no-nulos).
+  const documento = $derived(hitl.document.record!);
+  const draft = $derived(hitl.document.draft as MetadatosOficioDraft);
+  const meta = $derived(estadoMeta(documento.estado));
+
+  // `uiStatus.locked` solo cubre APROBADO_HITL/EN_RPA (pipeline de salida en curso).
+  // Solo PENDIENTE_REVISION/EN_REVISION admiten editar Y confirmar; ERROR_RPA está en
+  // `EDITABLE_STATES` (es "consultable", ver su comentario en types.ts) pero
+  // `canSubmit` lo excluye a propósito — ahí solo cabe reintentar el RPA, no reconfirmar
+  // metadatos — y COMPLETADO/ERROR_* de preproceso o extracción son puramente de
+  // lectura. Sin este `formDisabled`, esos campos quedaban editables en pantalla aunque
+  // cualquier cambio se descartara en silencio (el botón de confirmar ya estaba
+  // deshabilitado, pero no lo estaba el input).
+  const formDisabled = $derived(
+    hitl.uiStatus.locked || (documento.estado !== 'PENDIENTE_REVISION' && documento.estado !== 'EN_REVISION')
+  );
 
   // ============================================================
-  // 1) ESTADO DEL FORMULARIO (Runes: $state)
+  // 1) CAMPOS TOCADOS + ERRORES (validación vive en `hitl.formValidation`)
   // ============================================================
 
-  // Inicializa el formulario desde los metadatos extraídos por Gemini.
-  // Si por algún边缘 caso no existieran, se usan defaults seguros.
-  const defaults: MetadatosOficio = {
-    numeroOficio: "S/N",
-    fechaEmision: new Date().toISOString().slice(0, 10),
-    procedencia: "Ajena",
-    dependenciaArea: "",
-    remitenteNombre: "",
-    remitenteCargo: "NO ESPECIFICADO",
-    destinatarioNombre: "",
-    destinatarioCargo: "NO ESPECIFICADO",
-    asunto: "",
-    plazoDias: null,
-    contieneDatosSensibles: false,
-  };
-
-  let form = $state<MetadatosOficio>({
-    ...defaults,
-    ...(documento.metadatosExtraidos ?? {}),
-  });
-
-  // Estado de envío: bloquea la UI tras la confirmación.
-  let enviando = $state(false);
-  let errorMsg = $state<string | null>(null);
-
-  // ============================================================
-  // 2) VALIDACIÓN DERIVADA (Runes: $derived)
-  // ============================================================
-
-  // Fecha estricta YYYY-MM-DD.
-  const RE_FECHA = /^\d{4}-\d{2}-\d{2}$/;
-
-  let errores = $derived({
-    numeroOficio: form.numeroOficio.trim().length === 0
-      ? "El folio es obligatorio (use 'S/N')."
-      : /[\/\\:*?"<>|]/.test(form.numeroOficio)
-        ? "Caracteres / \\ : * ? \" < > | no permitidos."
-        : null,
-    fechaEmision: !RE_FECHA.test(form.fechaEmision)
-      ? "Formato requerido: YYYY-MM-DD."
-      : null,
-    dependenciaArea: form.dependenciaArea.trim().length === 0
-      ? "Especifique la dependencia emisora."
-      : null,
-    remitenteNombre: form.remitenteNombre.trim().length === 0
-      ? "Nombre del firmante obligatorio."
-      : null,
-    destinatarioNombre: form.destinatarioNombre.trim().length === 0
-      ? "Nombre del destinatario obligatorio."
-      : null,
-    asunto: form.asunto.trim().length < 5
-      ? "Síntesis demasiado corta (mín. 5 caracteres)."
-      : null,
-    plazoDias:
-      form.plazoDias !== null && (!Number.isInteger(form.plazoDias) || form.plazoDias < 0)
-        ? "Debe ser un entero positivo o vacío."
-        : null,
-  });
-
-  let hayErrores = $derived(Object.values(errores).some((e) => e !== null));
-  let puedeConfirmar = $derived(!hayErrores && !enviando);
-
-  // Banderas reactivas para resaltar campos inválidos sólo tras interacción.
   let tocadas = $state<Record<string, boolean>>({});
 
-  // ============================================================
-  // 3) NORMALIZACIÓN EN $effect (mayúsculas / sanitización)
-  // ============================================================
-  // Aplica las mismas reglas del contrato Zod del PRD.
-  $effect(() => {
-    // Normaliza a mayúsculas y trim sin mutar si ya está normalizado
-    // (evita loops infinitos comparando longitud/contenido).
-    const upper = (v: string) => v.toUpperCase().trim();
-
-    if (form.dependenciaArea !== upper(form.dependenciaArea)) {
-      form.dependenciaArea = upper(form.dependenciaArea);
+  const errorsByField = $derived.by((): Record<string, string> => {
+    const map: Record<string, string> = {};
+    for (const issue of hitl.formValidation.issues) {
+      if (!(issue.path in map)) map[issue.path] = issue.message;
     }
-    if (form.remitenteNombre !== upper(form.remitenteNombre)) {
-      form.remitenteNombre = upper(form.remitenteNombre);
-    }
-    if (form.remitenteCargo !== upper(form.remitenteCargo)) {
-      form.remitenteCargo = upper(form.remitenteCargo);
-    }
-    if (form.destinatarioNombre !== upper(form.destinatarioNombre)) {
-      form.destinatarioNombre = upper(form.destinatarioNombre);
-    }
-    if (form.destinatarioCargo !== upper(form.destinatarioCargo)) {
-      form.destinatarioCargo = upper(form.destinatarioCargo);
-    }
-    // Asunto: colapsa saltos de línea a espacios.
-    const asuntoLimpio = form.asunto.replace(/[\r\n]+/g, " ").trim();
-    if (form.asunto !== asuntoLimpio) {
-      form.asunto = asuntoLimpio;
-    }
-    // Sanitiza folio reemplazando caracteres reservados por '-'.
-    const folioLimpio = form.numeroOficio.replace(/[\/\\:*?"<>|]/g, "-");
-    if (form.numeroOficio !== folioLimpio) {
-      form.numeroOficio = folioLimpio;
-    }
+    return map;
   });
 
+  function tocar(campo: string): void {
+    tocadas = { ...tocadas, [campo]: true };
+  }
+  function errVisible(campo: string): string | null {
+    return tocadas[campo] ? (errorsByField[campo] ?? null) : null;
+  }
+
+  function set<K extends keyof MetadatosOficioDraft>(field: K, value: MetadatosOficioDraft[K]): void {
+    hitl.updateDraftField(field, value);
+  }
+
+  // Normalización visual en vivo (mayúsculas / sanitización), igual a las reglas del
+  // contrato Zod del backend — puramente cosmético mientras se escribe; la validación
+  // real y la normalización autoritativa las aplica el servidor al confirmar.
+  $effect(() => {
+    const d = hitl.document.draft;
+    if (!d || formDisabled) return;
+    const upper = (v: string) => v.toUpperCase();
+
+    if (d.dependenciaArea && d.dependenciaArea !== upper(d.dependenciaArea)) set('dependenciaArea', upper(d.dependenciaArea));
+    if (d.remitenteNombre && d.remitenteNombre !== upper(d.remitenteNombre)) set('remitenteNombre', upper(d.remitenteNombre));
+    if (d.remitenteCargo && d.remitenteCargo !== upper(d.remitenteCargo)) set('remitenteCargo', upper(d.remitenteCargo));
+    if (d.destinatarioNombre && d.destinatarioNombre !== upper(d.destinatarioNombre))
+      set('destinatarioNombre', upper(d.destinatarioNombre));
+    if (d.destinatarioCargo && d.destinatarioCargo !== upper(d.destinatarioCargo))
+      set('destinatarioCargo', upper(d.destinatarioCargo));
+
+    const folioLimpio = (d.numeroOficio ?? '').replace(/[\/\\:*?"<>|]/g, '-');
+    if (d.numeroOficio !== folioLimpio) set('numeroOficio', folioLimpio);
+  });
+
+  function onPlazoInput(e: Event): void {
+    const input = e.target as HTMLInputElement;
+    const raw = input.value.trim();
+    if (raw === '') {
+      set('plazoDias', null);
+      return;
+    }
+    const n = Number(raw);
+    if (Number.isFinite(n) && n >= 0) set('plazoDias', Math.floor(n));
+  }
+
   // ============================================================
-  // 4) VISOR PDF.js (Canvas)
+  // 2) VISOR PDF.js (Canvas) — página/zoom/rotación viven en `hitl.viewSettings`
   // ============================================================
 
   let canvasEl = $state<HTMLCanvasElement | null>(null);
   let renderTask: pdfjsLib.RenderTask | null = null;
   let pdfDoc: pdfjsLib.PDFDocumentProxy | null = null;
 
-  let numPaginas = $state(0);
-  let paginaActual = $state(1);
-  let escala = $state(1.0); // escala base de render
-  let rotacion = $state(0); // grados (0 | 90 | 180 | 270)
-  let ajusteAncho = $state(true); // auto-fit al ancho del panel
+  let ajusteAncho = $state(true);
   let cargandoPdf = $state(true);
   let pdfError = $state<string | null>(null);
+  let panelAncho = $state(0);
+  let panelIzqEl = $state<HTMLElement | null>(null);
 
   const ESCALA_MIN = 0.25;
   const ESCALA_MAX = 4.0;
 
-  // Ancho disponible del panel izquierdo para calcular "fit to width".
-  let panelAncho = $state(0);
-
-  async function cargarPdf() {
+  async function cargarPdf(src: string): Promise<void> {
     cargandoPdf = true;
     pdfError = null;
+    ajusteAncho = true;
     try {
-      // Se deriva el tipo de parámetros directamente de `getDocument` (en vez de
-      // `pdfjsLib.DocumentInitParameters`, no exportado en todas las versiones de
-      // pdfjs-dist) para no acoplarse a un nombre de tipo que puede cambiar entre
-      // releases del paquete.
-      const params: Parameters<typeof pdfjsLib.getDocument>[0] =
-        src instanceof ArrayBuffer
-          ? { data: new Uint8Array(src) }
-          : { url: src };
-
-      const tarea = pdfjsLib.getDocument(params);
+      pdfDoc?.destroy().catch(() => {});
+      const tarea = pdfjsLib.getDocument({ url: src });
       pdfDoc = await tarea.promise;
-      numPaginas = pdfDoc.numPages;
-      paginaActual = 1;
+      hitl.viewSettings.totalPages = pdfDoc.numPages;
+      hitl.setPage(1);
       await renderizarPagina();
     } catch (err) {
       pdfError = err instanceof Error ? err.message : String(err);
       pdfDoc = null;
-      numPaginas = 0;
     } finally {
       cargandoPdf = false;
     }
   }
 
-  // Re-renderiza cuando cambian página, escala, rotación o ajuste al ancho.
+  // Recarga el PDF cuando cambia el documento abierto.
   $effect(() => {
-    // Reaccionar a estos valores (dependencias del effect):
-    void paginaActual;
-    void escala;
-    void rotacion;
-    void ajusteAncho;
-    void panelAncho;
-    if (pdfDoc && canvasEl) {
-      renderizarPagina();
-    }
+    const url = hitl.document.pdfUrl;
+    if (url) void cargarPdf(url);
   });
 
-  async function renderizarPagina() {
-    if (!pdfDoc || !canvasEl) return;
-    const page = await pdfDoc.getPage(paginaActual);
+  // Re-renderiza cuando cambian página, zoom, rotación o ajuste al ancho.
+  $effect(() => {
+    void hitl.viewSettings.currentPage;
+    void hitl.viewSettings.zoom;
+    void hitl.viewSettings.rotation;
+    void ajusteAncho;
+    void panelAncho;
+    if (pdfDoc && canvasEl) void renderizarPagina();
+  });
 
-    // Si "ajustar al ancho" está activo, calcula escala según el panel.
-    let escalaFinal = escala;
+  async function renderizarPagina(): Promise<void> {
+    if (!pdfDoc || !canvasEl) return;
+    const page = await pdfDoc.getPage(hitl.viewSettings.currentPage);
+
+    let escalaFinal = hitl.viewSettings.zoom;
     if (ajusteAncho && panelAncho > 0) {
-      const viewportBase = page.getViewport({ scale: 1, rotation: rotacion });
-      escalaFinal = panelAncho / viewportBase.width;
-      escalaFinal = Math.min(Math.max(escalaFinal, ESCALA_MIN), ESCALA_MAX);
+      const viewportBase = page.getViewport({ scale: 1, rotation: hitl.viewSettings.rotation });
+      escalaFinal = Math.min(Math.max(panelAncho / viewportBase.width, ESCALA_MIN), ESCALA_MAX);
     }
 
-    const viewport = page.getViewport({ scale: escalaFinal, rotation: rotacion });
-    const ctx = canvasEl.getContext("2d");
+    const viewport = page.getViewport({ scale: escalaFinal, rotation: hitl.viewSettings.rotation });
+    const ctx = canvasEl.getContext('2d');
     if (!ctx) return;
 
-    // Ajusta el canvas a alta resolución (devicePixelRatio) para nitidez.
     const dpr = window.devicePixelRatio || 1;
     canvasEl.width = Math.floor(viewport.width * dpr);
     canvasEl.height = Math.floor(viewport.height * dpr);
     canvasEl.style.width = `${Math.floor(viewport.width)}px`;
     canvasEl.style.height = `${Math.floor(viewport.height)}px`;
-
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    // Cancela cualquier render previo en curso.
     if (renderTask) {
       try {
         renderTask.cancel();
@@ -262,126 +184,50 @@
         /* ignore */
       }
     }
-
-    renderTask = page.render({
-      canvasContext: ctx,
-      viewport,
-    });
-
+    renderTask = page.render({ canvasContext: ctx, viewport });
     try {
       await renderTask.promise;
     } catch (err) {
-      // 'RenderingCancelledException' es esperada al re-renderizar rápido.
-      if (
-        !(err instanceof Error && err.name === "RenderingCancelledException")
-      ) {
-        console.error("Render PDF falló:", err);
+      if (!(err instanceof Error && err.name === 'RenderingCancelledException')) {
+        console.error('Render PDF falló:', err);
       }
     } finally {
       renderTask = null;
     }
   }
 
-  // --- Controles del visor ---
-  function zoomIn() {
+  function zoomIn(): void {
     ajusteAncho = false;
-    escala = Math.min(escala * 1.2, ESCALA_MAX);
+    hitl.zoomIn();
   }
-  function zoomOut() {
+  function zoomOut(): void {
     ajusteAncho = false;
-    escala = Math.max(escala / 1.2, ESCALA_MIN);
+    hitl.zoomOut();
   }
-  function rotar() {
-    rotacion = (rotacion + 90) % 360;
+  function rotar(): void {
+    hitl.rotate();
   }
-  function ajustarAncho() {
+  function ajustarAncho(): void {
     ajusteAncho = true;
   }
-  function paginaAnterior() {
-    if (paginaActual > 1) paginaActual -= 1;
+  function paginaAnterior(): void {
+    hitl.setPage(hitl.viewSettings.currentPage - 1);
   }
-  function paginaSiguiente() {
-    if (paginaActual < numPaginas) paginaActual += 1;
+  function paginaSiguiente(): void {
+    hitl.setPage(hitl.viewSettings.currentPage + 1);
   }
 
-  // Observa el ancho del panel izquierdo para el auto-fit.
   let resizeObserver: ResizeObserver | null = null;
-  let panelIzqEl = $state<HTMLElement | null>(null);
-
   $effect(() => {
-    if (panelIzqEl) {
-      resizeObserver = new ResizeObserver((entries) => {
-        for (const entry of entries) {
-          panelAncho = entry.contentRect.width;
-        }
-      });
-      resizeObserver.observe(panelIzqEl);
-      return () => {
-        resizeObserver?.disconnect();
-        resizeObserver = null;
-      };
-    }
-  });
-
-  // ============================================================
-  // 5) CONFIRMACIÓN HITL
-  // ============================================================
-
-  async function confirmar() {
-    if (!puedeConfirmar) return;
-    // Marca todos los campos como tocados para mostrar errores residuales.
-    tocadas = {
-      numeroOficio: true,
-      fechaEmision: true,
-      dependenciaArea: true,
-      remitenteNombre: true,
-      destinatarioNombre: true,
-      asunto: true,
-      plazoDias: true,
+    if (!panelIzqEl) return;
+    resizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) panelAncho = entry.contentRect.width;
+    });
+    resizeObserver.observe(panelIzqEl);
+    return () => {
+      resizeObserver?.disconnect();
+      resizeObserver = null;
     };
-    if (hayErrores) {
-      errorMsg = "Revise los campos marcados antes de confirmar.";
-      return;
-    }
-
-    errorMsg = null;
-    enviando = true;
-
-    // Construye el contrato inmutable validado.
-    const validados: MetadatosOficio = {
-      numeroOficio: form.numeroOficio.replace(/[\/\\:*?"<>|]/g, "-").trim() || "S/N",
-      fechaEmision: form.fechaEmision,
-      procedencia: form.procedencia,
-      dependenciaArea: form.dependenciaArea.toUpperCase().trim(),
-      remitenteNombre: form.remitenteNombre.toUpperCase().trim(),
-      remitenteCargo: form.remitenteCargo.toUpperCase().trim() || "NO ESPECIFICADO",
-      destinatarioNombre: form.destinatarioNombre.toUpperCase().trim(),
-      destinatarioCargo: form.destinatarioCargo.toUpperCase().trim() || "NO ESPECIFICADO",
-      asunto: form.asunto.replace(/[\r\n]+/g, " ").trim(),
-      plazoDias:
-        form.plazoDias === null || form.plazoDias === undefined
-          ? null
-          : Math.max(0, Math.floor(form.plazoDias)),
-      contieneDatosSensibles: form.contieneDatosSensibles,
-    };
-
-    try {
-      await onconfirm?.(validados);
-      // El orquestador (Fastify) se encarga de la transición de estado
-      // (APROBADO_HITL -> EN_RPA -> COMPLETADO). Aquí sólo bloqueamos la UI.
-    } catch (err) {
-      errorMsg = err instanceof Error ? err.message : "Error al registrar en Intranet.";
-      // Permite reintento manual si el orquestador lo permite (ERROR_RPA).
-      enviando = false;
-    }
-  }
-
-  // ============================================================
-  // 6) CICLO DE VIDA
-  // ============================================================
-
-  onMount(() => {
-    cargarPdf();
   });
 
   onDestroy(() => {
@@ -395,444 +241,477 @@
     pdfDoc?.destroy().catch(() => {});
   });
 
-  // Atajos de teclado para el visor.
-  function onKey(e: KeyboardEvent) {
-    if (enviando) return;
+  function onKey(e: KeyboardEvent): void {
+    if (hitl.uiStatus.submitting) return;
     switch (e.key) {
-      case "ArrowLeft":
+      case 'ArrowLeft':
         paginaAnterior();
         break;
-      case "ArrowRight":
+      case 'ArrowRight':
         paginaSiguiente();
         break;
-      case "+":
-      case "=":
+      case '+':
+      case '=':
         zoomIn();
         break;
-      case "-":
+      case '-':
         zoomOut();
         break;
-      case "r":
-      case "R":
+      case 'r':
+      case 'R':
         rotar();
         break;
-      case "f":
-      case "F":
+      case 'f':
+      case 'F':
         ajustarAncho();
         break;
     }
   }
 
-  // Helper para marcar campo tocado y mostrar error.
-  function tocar(campo: string) {
-    tocadas = { ...tocadas, [campo]: true };
-  }
-  function errVisible(campo: string): string | null {
-    return tocadas[campo] ? ((errores as Record<string, string | null>)[campo] ?? null) : null;
+  // ============================================================
+  // 3) CONFIRMACIÓN / REINTENTO
+  // ============================================================
+
+  const CAMPOS_REQUERIDOS = ['numeroOficio', 'fechaEmision', 'dependenciaArea', 'remitenteNombre', 'destinatarioNombre', 'asunto'];
+
+  async function confirmar(): Promise<void> {
+    tocadas = Object.fromEntries(CAMPOS_REQUERIDOS.map((c) => [c, true]));
+    if (!hitl.canSubmit) return;
+    await hitl.submitConfirmation(userId);
   }
 
-  // Plazo: el input numérico puede quedar vacío -> null.
-  function onPlazoInput(e: Event) {
-    const input = e.target as HTMLInputElement;
-    const raw = input.value.trim();
-    if (raw === "") {
-      form.plazoDias = null;
-    } else {
-      const n = Number(raw);
-      form.plazoDias = Number.isFinite(n) && n >= 0 ? Math.floor(n) : form.plazoDias;
+  // ============================================================
+  // 4) OFICIOS RELACIONADOS (Puerto 7 — búsqueda semántica local, degradación honesta)
+  // ============================================================
+
+  let relacionados = $state<DocumentoRelacionado[]>([]);
+  let relacionadosEstado = $state<ModeloEstado | 'CARGANDO_UI' | null>(null);
+  let relacionadosAbierto = $state(false);
+
+  async function cargarRelacionados(): Promise<void> {
+    relacionadosEstado = 'CARGANDO_UI';
+    try {
+      const res = await api.getRelatedDocuments(documento.id, { limite: 5 });
+      relacionados = res.documentos;
+      relacionadosEstado = res.modeloEstado;
+    } catch {
+      relacionados = [];
+      relacionadosEstado = 'ERROR_INFERENCIA';
     }
   }
+
+  $effect(() => {
+    // Recarga al cambiar de documento.
+    void documento.id;
+    relacionados = [];
+    relacionadosEstado = null;
+    relacionadosAbierto = false;
+  });
+
+  function toggleRelacionados(): void {
+    relacionadosAbierto = !relacionadosAbierto;
+    if (relacionadosAbierto && relacionadosEstado === null) void cargarRelacionados();
+  }
+
+  onMount(() => {
+    // ancho inicial del panel, antes de que dispare el primer resize
+  });
 </script>
 
 <div
-  class="flex h-screen w-full flex-col bg-slate-900 text-slate-100 lg:flex-row"
+  class="flex h-full w-full flex-col overflow-hidden bg-white lg:flex-row"
   role="application"
   aria-label="Revisión Human-in-the-Loop de oficio"
   onkeydown={onKey}
   tabindex="-1"
 >
   <!-- ============================================================ -->
-  <!-- BARRA SUPERIOR DE CONTEXTO                                    -->
-  <!-- ============================================================ -->
-  <header class="flex items-center justify-between border-b border-slate-700 bg-slate-800 px-4 py-3 lg:absolute lg:top-0 lg:left-0 lg:right-0 lg:z-20">
-    <div class="flex items-center gap-3">
-      <span class="inline-flex h-9 w-9 items-center justify-center rounded-md bg-emerald-600 font-bold text-white">
-        DSA
-      </span>
-      <div class="leading-tight">
-        <p class="text-sm font-semibold">Oficialía Digital · HITL</p>
-        <p class="text-xs text-slate-400 truncate max-w-[40vw]">
-          {documento.nombreArchivoOriginal}
-        </p>
-      </div>
-    </div>
-    <div class="flex items-center gap-2">
-      <span
-        class="rounded-full px-3 py-1 text-xs font-medium {documento.estado === 'PENDIENTE_REVISION'
-          ? 'bg-amber-500/20 text-amber-300'
-          : 'bg-slate-700 text-slate-300'}"
-      >
-        Estado: {documento.estado}
-      </span>
-      {#if oncancel}
-        <button
-          type="button"
-          class="rounded-md border border-slate-600 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-700 disabled:opacity-50"
-          onclick={oncancel}
-          disabled={enviando}
-        >
-          Cancelar
-        </button>
-      {/if}
-    </div>
-  </header>
-
-  <!-- ============================================================ -->
   <!-- PANEL IZQUIERDO — VISOR PDF.js                                -->
   <!-- ============================================================ -->
   <section
     bind:this={panelIzqEl}
-    class="relative flex h-1/2 flex-col bg-slate-950 lg:mt-16 lg:h-[calc(100vh-4rem)] lg:w-1/2"
+    class="relative flex h-1/2 flex-col border-b border-slate-200 bg-slate-100 lg:h-full lg:w-1/2 lg:border-b-0 lg:border-r"
     aria-label="Visor de documento PDF"
   >
-    <!-- Toolbar del visor -->
-    <div class="flex items-center gap-1 border-b border-slate-800 bg-slate-900/80 px-3 py-2 backdrop-blur">
-      <button
-        type="button"
-        class="visor-btn"
-        title="Página anterior (←)"
-        onclick={paginaAnterior}
-        disabled={paginaActual <= 1 || cargandoPdf || enviando}
-      >◀</button>
-
-      <span class="px-2 text-xs tabular-nums text-slate-300">
-        {paginaActual} / {numPaginas || "—"}
+    <div class="flex items-center gap-1 border-b border-slate-200 bg-white px-3 py-2">
+      <button type="button" class="visor-btn" title="Página anterior (←)" onclick={paginaAnterior} disabled={hitl.viewSettings.currentPage <= 1 || cargandoPdf}>
+        <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M12.79 5.23a.75.75 0 0 1 0 1.06L9.06 10l3.73 3.71a.75.75 0 1 1-1.06 1.06l-4.25-4.25a.75.75 0 0 1 0-1.06l4.25-4.25a.75.75 0 0 1 1.06 0Z" clip-rule="evenodd" /></svg>
+      </button>
+      <span class="min-w-[4.5rem] text-center text-xs tabular-nums text-slate-500">
+        {hitl.viewSettings.currentPage} / {hitl.viewSettings.totalPages || '—'}
       </span>
+      <button type="button" class="visor-btn" title="Página siguiente (→)" onclick={paginaSiguiente} disabled={hitl.viewSettings.currentPage >= hitl.viewSettings.totalPages || cargandoPdf}>
+        <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 0 1 0-1.06L10.94 10 7.21 6.29a.75.75 0 1 1 1.06-1.06l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0Z" clip-rule="evenodd" /></svg>
+      </button>
 
+      <span class="mx-1 h-5 w-px bg-slate-200"></span>
+
+      <button type="button" class="visor-btn" title="Alejar (-)" onclick={zoomOut} disabled={cargandoPdf}>
+        <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path d="M4.25 9.25a.75.75 0 0 0 0 1.5h11.5a.75.75 0 0 0 0-1.5H4.25Z" /></svg>
+      </button>
+      <button type="button" class="visor-btn" title="Acercar (+)" onclick={zoomIn} disabled={cargandoPdf}>
+        <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path d="M10 4.25a.75.75 0 0 1 .75.75v4.25H15a.75.75 0 0 1 0 1.5h-4.25V15a.75.75 0 0 1-1.5 0v-4.25H5a.75.75 0 0 1 0-1.5h4.25V5a.75.75 0 0 1 .75-.75Z" /></svg>
+      </button>
+      <button type="button" class="visor-btn" title="Rotar 90° (R)" onclick={rotar} disabled={cargandoPdf}>
+        <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4.755 10.059a5.25 5.25 0 0 1 8.897-2.588L15.312 9.11a.75.75 0 0 0 1.28-.53V4a.75.75 0 0 0-1.5 0v1.638l-1.293-1.292a6.75 6.75 0 1 0 1.933 5.925.75.75 0 0 0-1.485-.21 5.25 5.25 0 1 1-9.492.998Z" clip-rule="evenodd" /></svg>
+      </button>
       <button
         type="button"
-        class="visor-btn"
-        title="Página siguiente (→)"
-        onclick={paginaSiguiente}
-        disabled={paginaActual >= numPaginas || cargandoPdf || enviando}
-      >▶</button>
-
-      <span class="mx-1 h-5 w-px bg-slate-700"></span>
-
-      <button
-        type="button"
-        class="visor-btn"
-        title="Alejar (-)"
-        onclick={zoomOut}
-        disabled={cargandoPdf || enviando}
-      >−</button>
-
-      <button
-        type="button"
-        class="visor-btn"
-        title="Acercar (+)"
-        onclick={zoomIn}
-        disabled={cargandoPdf || enviando}
-      >+</button>
-
-      <button
-        type="button"
-        class="visor-btn"
-        title="Rotar 90° (R)"
-        onclick={rotar}
-        disabled={cargandoPdf || enviando}
-      >⟳</button>
-
-      <button
-        type="button"
-        class="visor-btn"
+        class="visor-btn {ajusteAncho ? 'bg-brand-50 text-brand-600 ring-1 ring-inset ring-brand-300' : ''}"
         title="Ajustar al ancho (F)"
         onclick={ajustarAncho}
-        disabled={cargandoPdf || enviando}
-        class:ring-2={ajusteAncho}
-        class:ring-emerald-500={ajusteAncho}
-      >⤢</button>
+        disabled={cargandoPdf}
+      >
+        <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3.25 4A1.75 1.75 0 0 0 1.5 5.75v8.5c0 .966.784 1.75 1.75 1.75h13.5A1.75 1.75 0 0 0 18.5 14.25v-8.5A1.75 1.75 0 0 0 16.75 4H3.25ZM3 5.75A.25.25 0 0 1 3.25 5.5h13.5a.25.25 0 0 1 .25.25v8.5a.25.25 0 0 1-.25.25H3.25a.25.25 0 0 1-.25-.25v-8.5Z" clip-rule="evenodd" /></svg>
+      </button>
 
-      <span class="ml-auto text-[10px] text-slate-500 hidden sm:block">
-        Zoom: {Math.round(escala * 100)}% · Rot: {rotacion}°
-      </span>
+      <span class="ml-auto hidden text-[11px] text-slate-400 sm:block">{Math.round(hitl.viewSettings.zoom * 100)}%</span>
     </div>
 
-    <!-- Área de render -->
-    <div class="relative flex-1 overflow-auto p-4 flex justify-center items-start">
+    <div class="relative flex flex-1 items-start justify-center overflow-auto p-4">
       {#if cargandoPdf}
         <div class="flex h-full w-full items-center justify-center">
           <div class="flex flex-col items-center gap-3 text-slate-400">
-            <div class="h-8 w-8 animate-spin rounded-full border-2 border-slate-600 border-t-emerald-500"></div>
+            <div class="h-7 w-7 animate-spin rounded-full border-2 border-slate-300 border-t-brand-500"></div>
             <p class="text-xs">Cargando documento…</p>
           </div>
         </div>
       {:else if pdfError}
         <div class="flex h-full w-full items-center justify-center">
-          <div class="max-w-sm rounded-lg border border-red-800 bg-red-950/40 p-4 text-center text-red-300">
-            <p class="font-semibold">No se pudo abrir el PDF</p>
-            <p class="mt-1 text-xs text-red-400/80 break-words">{pdfError}</p>
+          <div class="max-w-sm rounded-lg border border-rose-200 bg-rose-50 p-4 text-center text-rose-700">
+            <p class="text-sm font-semibold">No se pudo abrir el PDF</p>
+            <p class="mt-1 break-words text-xs text-rose-600/80">{pdfError}</p>
           </div>
         </div>
       {:else}
-        <canvas
-          bind:this={canvasEl}
-          class="shadow-2xl shadow-black/50 ring-1 ring-slate-700"
-        ></canvas>
+        <canvas bind:this={canvasEl} class="rounded-sm bg-white shadow-panel ring-1 ring-slate-900/5"></canvas>
       {/if}
     </div>
   </section>
 
   <!-- ============================================================ -->
-  <!-- PANEL DERECHO — FORMULARIO REACTIVO                           -->
+  <!-- PANEL DERECHO — CONTEXTO + FORMULARIO REACTIVO                -->
   <!-- ============================================================ -->
-  <section
-    class="flex h-1/2 flex-col overflow-y-auto bg-slate-100 text-slate-800 lg:mt-16 lg:h-[calc(100vh-4rem)] lg:w-1/2"
-    aria-label="Formulario de validación de metadatos"
-  >
-    <form
-      class="flex flex-1 flex-col gap-5 p-5 lg:p-6"
-      onsubmit={(e) => {
-        e.preventDefault();
-        confirmar();
-      }}
-    >
-      <div class="flex items-center justify-between">
-        <h2 class="text-lg font-bold text-slate-900">Validación de Metadatos</h2>
-        <span class="text-xs text-slate-500">
-          Edite diferencias y confirme en &lt; 10 s
-        </span>
+  <section class="flex h-1/2 flex-col overflow-hidden lg:h-full lg:w-1/2" aria-label="Formulario de validación de metadatos">
+    <!-- Barra de contexto del documento -->
+    <header class="border-b border-slate-200 bg-white px-5 py-3">
+      <div class="flex items-start justify-between gap-3">
+        <div class="min-w-0">
+          <p class="truncate text-sm font-semibold text-slate-800" title={documento.nombreArchivoOriginal}>
+            {documento.nombreArchivoOriginal}
+          </p>
+          <p class="mt-0.5 text-xs text-slate-400">Ingresado {formatRelativeTime(documento.fechaIngesta)}</p>
+        </div>
+        <div class="flex shrink-0 items-center gap-2">
+          <span class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium {meta.badgeClass}">
+            <span class="h-1.5 w-1.5 rounded-full {meta.dotClass}"></span>
+            {meta.label}
+          </span>
+          {#if oncancel}
+            <button type="button" class="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600" title="Cerrar" onclick={oncancel}>
+              <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path d="m6.28 5.22 8.5 8.5a.75.75 0 1 1-1.06 1.06l-8.5-8.5a.75.75 0 0 1 1.06-1.06Z" /><path d="m14.78 6.28-8.5 8.5a.75.75 0 0 1-1.06-1.06l8.5-8.5a.75.75 0 1 1 1.06 1.06Z" /></svg>
+            </button>
+          {/if}
+        </div>
       </div>
 
-      {#if errorMsg}
-        <div class="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
-          ⚠ {errorMsg}
+      <!-- Progreso del pipeline -->
+      <div class="mt-3 h-1 w-full overflow-hidden rounded-full bg-slate-100">
+        <div
+          class="h-full rounded-full transition-all duration-500 {hitl.pipelineHasFailed ? 'bg-rose-500' : documento.estado === 'COMPLETADO' ? 'bg-emerald-500' : 'bg-brand-500'}"
+          style="width: {hitl.pipelineProgress}%"
+        ></div>
+      </div>
+    </header>
+
+    <div class="flex-1 overflow-y-auto">
+      {#if hitl.uiStatus.error}
+        <div class="mx-5 mt-4 rounded-lg border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-sm text-rose-700">
+          {hitl.uiStatus.error}
         </div>
       {/if}
 
-      <!-- Procedencia (radio HCG / Ajena) -->
-      <fieldset class="rounded-lg border border-slate-300 bg-white p-3">
-        <legend class="px-1 text-xs font-semibold text-slate-600">Procedencia</legend>
-        <div class="flex gap-4">
-          {#each ["HCG", "Ajena"] as opt}
-            <label class="flex cursor-pointer items-center gap-2 text-sm">
-              <input
-                type="radio"
-                name="procedencia"
-                value={opt}
-                bind:group={form.procedencia}
-                disabled={enviando}
-                class="h-4 w-4 accent-emerald-600"
-              />
-              <span>{opt === "HCG" ? "HCG (Interno)" : "Ajena (Externo)"}</span>
-            </label>
-          {/each}
-        </div>
-      </fieldset>
-
-      <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <!-- Número de Oficio -->
-        <div class="sm:col-span-1">
-          <label for="f-numero" class="form-label">Número de Oficio / Folio</label>
-          <input
-            id="f-numero"
-            type="text"
-            bind:value={form.numeroOficio}
-            onblur={() => tocar("numeroOficio")}
-            disabled={enviando}
-            class="form-input {errVisible('numeroOficio') ? 'input-error' : ''}"
-            placeholder="DSA-2026-089-OF o S/N"
-          />
-          {#if errVisible("numeroOficio")}
-            <p class="form-error">{errVisible("numeroOficio")}</p>
+      <!-- Resultado del RPA / Sheets, cuando aplica -->
+      {#if documento.rpa || documento.estado === 'ERROR_RPA' || documento.estado === 'EN_RPA'}
+        <div class="mx-5 mt-4 rounded-lg border border-slate-200 bg-slate-50 px-3.5 py-3 text-xs text-slate-600">
+          <p class="font-semibold text-slate-700">Registro en Intranet (op_cucs.fwx)</p>
+          {#if documento.rpa?.folioAcuseInstitucional}
+            <p class="mt-1">
+              Folio de acuse: <span class="font-mono font-medium text-slate-800">{documento.rpa.folioAcuseInstitucional}</span>
+            </p>
+          {:else if documento.estado === 'EN_RPA'}
+            <p class="mt-1 flex items-center gap-1.5 text-brand-600">
+              <span class="h-3 w-3 animate-spin rounded-full border-2 border-brand-200 border-t-brand-600"></span>
+              Registrando…
+            </p>
+          {:else if documento.rpa?.mensajeError}
+            <p class="mt-1 text-rose-600">{documento.rpa.mensajeError}</p>
           {/if}
+          <p class="mt-1 text-slate-400">
+            Google Sheets: {documento.sheetsSync.sincronizado ? 'sincronizado' : 'pendiente de sincronizar'}
+          </p>
         </div>
+      {/if}
 
-        <!-- Fecha de Emisión -->
-        <div class="sm:col-span-1">
-          <label for="f-fecha" class="form-label">Fecha de Emisión</label>
-          <input
-            id="f-fecha"
-            type="date"
-            bind:value={form.fechaEmision}
-            onblur={() => tocar("fechaEmision")}
-            disabled={enviando}
-            class="form-input {errVisible('fechaEmision') ? 'input-error' : ''}"
-          />
-          {#if errVisible("fechaEmision")}
-            <p class="form-error">{errVisible("fechaEmision")}</p>
-          {/if}
+      {#if hitl.canRetryRpa}
+        <div class="mx-5 mt-3">
+          <button
+            type="button"
+            onclick={() => hitl.retryRpa()}
+            disabled={hitl.uiStatus.submitting}
+            class="w-full rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            ↻ Reintentar registro en Intranet
+          </button>
         </div>
+      {/if}
 
-        <!-- Dependencia / Área -->
-        <div class="sm:col-span-2">
-          <label for="f-dependencia" class="form-label">Dependencia / Área emisora</label>
-          <input
-            id="f-dependencia"
-            type="text"
-            bind:value={form.dependenciaArea}
-            onblur={() => tocar("dependenciaArea")}
-            disabled={enviando}
-            class="form-input uppercase {errVisible('dependenciaArea') ? 'input-error' : ''}"
-            placeholder="DIRECCIÓN GENERAL HCG"
-          />
-          {#if errVisible("dependenciaArea")}
-            <p class="form-error">{errVisible("dependenciaArea")}</p>
-          {/if}
-        </div>
+      <form
+        class="flex flex-col gap-5 p-5"
+        onsubmit={(e) => {
+          e.preventDefault();
+          void confirmar();
+        }}
+      >
+        <fieldset class="rounded-lg border border-slate-200 bg-white p-3" disabled={formDisabled}>
+          <legend class="px-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Procedencia</legend>
+          <div class="flex gap-4">
+            {#each [{ v: 'HCG', l: 'HCG (Interno)' }, { v: 'Ajena', l: 'Ajena (Externo)' }] as opt}
+              <label class="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
+                <input
+                  type="radio"
+                  name="procedencia"
+                  checked={draft.procedencia === opt.v}
+                  onchange={() => set('procedencia', opt.v as MetadatosOficioDraft['procedencia'])}
+                  class="h-4 w-4 accent-brand-600"
+                />
+                {opt.l}
+              </label>
+            {/each}
+          </div>
+        </fieldset>
 
-        <!-- Remitente -->
-        <div class="sm:col-span-1">
-          <label for="f-rem-nombre" class="form-label">Remitente (Firmante)</label>
-          <input
-            id="f-rem-nombre"
-            type="text"
-            bind:value={form.remitenteNombre}
-            onblur={() => tocar("remitenteNombre")}
-            disabled={enviando}
-            class="form-input uppercase {errVisible('remitenteNombre') ? 'input-error' : ''}"
-          />
-          {#if errVisible("remitenteNombre")}
-            <p class="form-error">{errVisible("remitenteNombre")}</p>
-          {/if}
-        </div>
-
-        <div class="sm:col-span-1">
-          <label for="f-rem-cargo" class="form-label">Cargo del Remitente</label>
-          <input
-            id="f-rem-cargo"
-            type="text"
-            bind:value={form.remitenteCargo}
-            disabled={enviando}
-            class="form-input uppercase"
-            placeholder="NO ESPECIFICADO"
-          />
-        </div>
-
-        <!-- Destinatario -->
-        <div class="sm:col-span-1">
-          <label for="f-des-nombre" class="form-label">Destinatario</label>
-          <input
-            id="f-des-nombre"
-            type="text"
-            bind:value={form.destinatarioNombre}
-            onblur={() => tocar("destinatarioNombre")}
-            disabled={enviando}
-            class="form-input uppercase {errVisible('destinatarioNombre') ? 'input-error' : ''}"
-          />
-          {#if errVisible("destinatarioNombre")}
-            <p class="form-error">{errVisible("destinatarioNombre")}</p>
-          {/if}
-        </div>
-
-        <div class="sm:col-span-1">
-          <label for="f-des-cargo" class="form-label">Cargo del Destinatario</label>
-          <input
-            id="f-des-cargo"
-            type="text"
-            bind:value={form.destinatarioCargo}
-            disabled={enviando}
-            class="form-input uppercase"
-            placeholder="NO ESPECIFICADO"
-          />
-        </div>
-
-        <!-- Plazo (días) -->
-        <div class="sm:col-span-1">
-          <label for="f-plazo" class="form-label">Plazo de respuesta (días)</label>
-          <input
-            id="f-plazo"
-            type="number"
-            min="0"
-            step="1"
-            value={form.plazoDias ?? ""}
-            oninput={onPlazoInput}
-            onblur={() => tocar("plazoDias")}
-            disabled={enviando}
-            class="form-input {errVisible('plazoDias') ? 'input-error' : ''}"
-            placeholder="Vacío si no aplica"
-          />
-          {#if errVisible("plazoDias")}
-            <p class="form-error">{errVisible("plazoDias")}</p>
-          {/if}
-        </div>
-
-        <!-- Datos sensibles (checkbox) -->
-        <div class="sm:col-span-1 flex items-end">
-          <label class="flex w-full cursor-pointer items-center gap-3 rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm">
+        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div>
+            <label for="f-numero" class="form-label">Número de Oficio / Folio</label>
             <input
-              type="checkbox"
-              bind:checked={form.contieneDatosSensibles}
-              disabled={enviando}
-              class="h-4 w-4 accent-rose-600"
+              id="f-numero"
+              type="text"
+              value={draft.numeroOficio ?? ''}
+              oninput={(e) => set('numeroOficio', (e.currentTarget as HTMLInputElement).value)}
+              onblur={() => tocar('numeroOficio')}
+              disabled={formDisabled}
+              class="form-input {errVisible('numeroOficio') ? 'input-error' : ''}"
+              placeholder="DSA-2026-089-OF o S/N"
             />
-            <span class="font-medium text-slate-700">
-              Contiene datos sensibles (LGPDPPSO)
-            </span>
-          </label>
+            {#if errVisible('numeroOficio')}<p class="form-error">{errVisible('numeroOficio')}</p>{/if}
+          </div>
+
+          <div>
+            <label for="f-fecha" class="form-label">Fecha de Emisión</label>
+            <input
+              id="f-fecha"
+              type="date"
+              value={draft.fechaEmision ?? ''}
+              oninput={(e) => set('fechaEmision', (e.currentTarget as HTMLInputElement).value)}
+              onblur={() => tocar('fechaEmision')}
+              disabled={formDisabled}
+              class="form-input {errVisible('fechaEmision') ? 'input-error' : ''}"
+            />
+            {#if errVisible('fechaEmision')}<p class="form-error">{errVisible('fechaEmision')}</p>{/if}
+          </div>
+
+          <div class="sm:col-span-2">
+            <label for="f-dependencia" class="form-label">Dependencia / Área emisora</label>
+            <input
+              id="f-dependencia"
+              type="text"
+              value={draft.dependenciaArea ?? ''}
+              oninput={(e) => set('dependenciaArea', (e.currentTarget as HTMLInputElement).value)}
+              onblur={() => tocar('dependenciaArea')}
+              disabled={formDisabled}
+              class="form-input uppercase {errVisible('dependenciaArea') ? 'input-error' : ''}"
+              placeholder="DIRECCIÓN GENERAL HCG"
+            />
+            {#if errVisible('dependenciaArea')}<p class="form-error">{errVisible('dependenciaArea')}</p>{/if}
+          </div>
+
+          <div>
+            <label for="f-rem-nombre" class="form-label">Remitente (Firmante)</label>
+            <input
+              id="f-rem-nombre"
+              type="text"
+              value={draft.remitenteNombre ?? ''}
+              oninput={(e) => set('remitenteNombre', (e.currentTarget as HTMLInputElement).value)}
+              onblur={() => tocar('remitenteNombre')}
+              disabled={formDisabled}
+              class="form-input uppercase {errVisible('remitenteNombre') ? 'input-error' : ''}"
+            />
+            {#if errVisible('remitenteNombre')}<p class="form-error">{errVisible('remitenteNombre')}</p>{/if}
+          </div>
+
+          <div>
+            <label for="f-rem-cargo" class="form-label">Cargo del Remitente</label>
+            <input
+              id="f-rem-cargo"
+              type="text"
+              value={draft.remitenteCargo ?? ''}
+              oninput={(e) => set('remitenteCargo', (e.currentTarget as HTMLInputElement).value)}
+              disabled={formDisabled}
+              class="form-input uppercase"
+              placeholder="NO ESPECIFICADO"
+            />
+          </div>
+
+          <div>
+            <label for="f-des-nombre" class="form-label">Destinatario</label>
+            <input
+              id="f-des-nombre"
+              type="text"
+              value={draft.destinatarioNombre ?? ''}
+              oninput={(e) => set('destinatarioNombre', (e.currentTarget as HTMLInputElement).value)}
+              onblur={() => tocar('destinatarioNombre')}
+              disabled={formDisabled}
+              class="form-input uppercase {errVisible('destinatarioNombre') ? 'input-error' : ''}"
+            />
+            {#if errVisible('destinatarioNombre')}<p class="form-error">{errVisible('destinatarioNombre')}</p>{/if}
+          </div>
+
+          <div>
+            <label for="f-des-cargo" class="form-label">Cargo del Destinatario</label>
+            <input
+              id="f-des-cargo"
+              type="text"
+              value={draft.destinatarioCargo ?? ''}
+              oninput={(e) => set('destinatarioCargo', (e.currentTarget as HTMLInputElement).value)}
+              disabled={formDisabled}
+              class="form-input uppercase"
+              placeholder="NO ESPECIFICADO"
+            />
+          </div>
+
+          <div>
+            <label for="f-plazo" class="form-label">Plazo de respuesta (días)</label>
+            <input
+              id="f-plazo"
+              type="number"
+              min="0"
+              step="1"
+              value={draft.plazoDias ?? ''}
+              oninput={onPlazoInput}
+              disabled={formDisabled}
+              class="form-input"
+              placeholder="Vacío si no aplica"
+            />
+          </div>
+
+          <div class="flex items-end">
+            <label class="flex w-full cursor-pointer items-center gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm">
+              <input
+                type="checkbox"
+                checked={draft.contieneDatosSensibles ?? false}
+                onchange={(e) => set('contieneDatosSensibles', (e.currentTarget as HTMLInputElement).checked)}
+                disabled={formDisabled}
+                class="h-4 w-4 accent-rose-600"
+              />
+              <span class="font-medium text-slate-700">Contiene datos sensibles (LGPDPPSO)</span>
+            </label>
+          </div>
+
+          <div class="sm:col-span-2">
+            <label for="f-asunto" class="form-label">Asunto / Síntesis</label>
+            <textarea
+              id="f-asunto"
+              value={draft.asunto ?? ''}
+              oninput={(e) => set('asunto', (e.currentTarget as HTMLTextAreaElement).value)}
+              onblur={() => tocar('asunto')}
+              disabled={formDisabled}
+              rows="4"
+              class="form-input resize-y {errVisible('asunto') ? 'input-error' : ''}"
+              placeholder="Síntesis del oficio (1 a 3 oraciones)."
+            ></textarea>
+            {#if errVisible('asunto')}<p class="form-error">{errVisible('asunto')}</p>{/if}
+          </div>
         </div>
 
-        <!-- Asunto (textarea, full width) -->
-        <div class="sm:col-span-2">
-          <label for="f-asunto" class="form-label">Asunto / Síntesis</label>
-          <textarea
-            id="f-asunto"
-            bind:value={form.asunto}
-            onblur={() => tocar("asunto")}
-            disabled={enviando}
-            rows="4"
-            class="form-input resize-y {errVisible('asunto') ? 'input-error' : ''}"
-            placeholder="Síntesis del oficio (1 a 3 oraciones)."
-          ></textarea>
-          {#if errVisible("asunto")}
-            <p class="form-error">{errVisible("asunto")}</p>
-          {/if}
-        </div>
-      </div>
-
-      <!-- Botón unificado de confirmación -->
-      <div class="sticky bottom-0 mt-auto -mx-5 -mb-5 border-t border-slate-200 bg-white/95 px-5 py-4 backdrop-blur lg:-mx-6 lg:-mb-6 lg:px-6">
-        <button
-          type="submit"
-          disabled={!puedeConfirmar}
-          class="flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-3 font-semibold text-white shadow-lg shadow-emerald-600/20 transition hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-400 disabled:shadow-none"
-        >
-          {#if enviando}
-            <svg class="h-5 w-5 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-              <path class="opacity-90" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z"></path>
+        <!-- Oficios relacionados (Puerto 7 — similitud semántica local) -->
+        <div class="rounded-lg border border-slate-200 bg-white">
+          <button type="button" onclick={toggleRelacionados} class="flex w-full items-center justify-between px-3.5 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+            Oficios relacionados
+            <svg class="h-4 w-4 transition-transform {relacionadosAbierto ? 'rotate-180' : ''}" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.168l3.71-3.938a.75.75 0 1 1 1.08 1.04l-4.25 4.5a.75.75 0 0 1-1.08 0l-4.25-4.5a.75.75 0 0 1 .02-1.06Z" clip-rule="evenodd" />
             </svg>
-            <span>Registrando en Intranet…</span>
-          {:else}
-            <span>✓ Confirmar y Registrar en Intranet</span>
+          </button>
+          {#if relacionadosAbierto}
+            <div class="border-t border-slate-100 px-3.5 py-3 text-sm">
+              {#if relacionadosEstado === 'CARGANDO_UI' || relacionadosEstado === 'CARGANDO'}
+                <p class="text-xs text-slate-400">Buscando oficios similares…</p>
+              {:else if relacionadosEstado === 'NO_INICIALIZADO'}
+                <p class="text-xs text-slate-400">Motor de búsqueda semántica aún no inicializado.</p>
+              {:else if relacionadosEstado === 'ERROR_INFERENCIA'}
+                <p class="text-xs text-slate-400">No se pudieron calcular similitudes por ahora.</p>
+              {:else if relacionados.length === 0}
+                <p class="text-xs text-slate-400">Sin oficios relacionados por similitud.</p>
+              {:else}
+                <ul class="flex flex-col gap-2">
+                  {#each relacionados as rel (rel.documentoId)}
+                    <li class="flex items-center justify-between gap-2 rounded-md bg-slate-50 px-2.5 py-1.5">
+                      <div class="min-w-0">
+                        <p class="truncate text-xs font-medium text-slate-700">{rel.numeroOficio ?? rel.nombreArchivoCanonico ?? rel.documentoId}</p>
+                        <p class="truncate text-[11px] text-slate-400">{rel.asunto ?? '—'}</p>
+                      </div>
+                      <span class="shrink-0 rounded-full bg-white px-2 py-0.5 text-[11px] font-medium text-slate-500 ring-1 ring-slate-200">
+                        {Math.round(rel.similitudScore * 100)}%
+                      </span>
+                    </li>
+                  {/each}
+                </ul>
+              {/if}
+            </div>
           {/if}
-        </button>
-        <p class="mt-2 text-center text-[11px] text-slate-500">
-          Se moverá a <code>storage/03_procesados/YYYY/MM/</code> y se inyectará en
-          <code>op_cucs.fwx</code> vía RPA.
-        </p>
-      </div>
-    </form>
+        </div>
+      </form>
+    </div>
+
+    <!-- Barra de acción, fija al fondo del panel -->
+    <div class="border-t border-slate-200 bg-white/95 px-5 py-4 backdrop-blur">
+      <button
+        type="button"
+        onclick={confirmar}
+        disabled={!hitl.canSubmit}
+        class="flex w-full items-center justify-center gap-2 rounded-lg bg-brand-600 px-4 py-3 text-sm font-semibold text-white shadow-soft transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+      >
+        {#if hitl.uiStatus.submitting}
+          <svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-90" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z"></path>
+          </svg>
+          <span>Registrando…</span>
+        {:else}
+          <span>Confirmar y registrar en Intranet</span>
+        {/if}
+      </button>
+      <p class="mt-2 text-center text-[11px] text-slate-400">
+        Se moverá a <code class="rounded bg-slate-100 px-1 py-0.5">storage/03_procesados/</code> y se inyectará vía RPA en <code class="rounded bg-slate-100 px-1 py-0.5">op_cucs.fwx</code>.
+      </p>
+    </div>
   </section>
 </div>
 
-<!-- ============================================================ -->
-<!-- ESTILOS DE COMPONENTE (Tailwind utility classes reutilizables) -->
-<!-- ============================================================ -->
 <style>
   .visor-btn {
-    @apply inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-700 bg-slate-800 text-sm text-slate-200 transition hover:bg-slate-700 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:cursor-not-allowed disabled:opacity-40;
+    @apply inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-30;
   }
   .form-label {
-    @apply mb-1 block text-xs font-semibold text-slate-600;
+    @apply mb-1 block text-xs font-medium text-slate-500;
   }
   .form-input {
-    @apply w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm transition focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400;
+    @apply w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm transition focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400;
   }
   .input-error {
-    @apply border-red-400 focus:border-red-500 focus:ring-red-500;
+    @apply border-rose-400 focus:border-rose-500 focus:ring-rose-500;
   }
   .form-error {
-    @apply mt-1 text-xs text-red-600;
+    @apply mt-1 text-xs text-rose-600;
   }
 </style>

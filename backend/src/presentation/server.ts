@@ -51,6 +51,25 @@ export async function buildServer() {
   fastify.setValidatorCompiler(validatorCompiler);
   fastify.setSerializerCompiler(serializerCompiler);
 
+  // --- Manejo centralizado de errores no capturados por las rutas -----------
+  // DEBE registrarse ANTES de cualquier `fastify.register(...)` de rutas (abajo). Fastify
+  // encapsula cada plugin registrado con `await fastify.register(...)` en su propio
+  // contexto en cuanto esa promesa resuelve; un `setErrorHandler` puesto en el root
+  // DESPUÉS de esos `register()` (como estaba antes) no se propaga retroactivamente a
+  // esos contextos ya cerrados, y esas rutas quedan con el manejador por defecto de
+  // Fastify — que responde `{statusCode, error: "Internal Server Error", message}`
+  // filtrando el `.message` interno de la excepción (p. ej. rutas/errores del worker
+  // Python) en vez del `{error, code}` genérico esperado por el frontend. Comprobado
+  // reproduciendo el bug de forma aislada: mover este bloque aquí lo corrige.
+  fastify.setErrorHandler((error: FastifyError, request, reply) => {
+    request.log.error({ err: error }, 'Error no manejado en la solicitud');
+    const statusCode = error.statusCode ?? 500;
+    reply.code(statusCode).send({
+      error: statusCode >= 500 ? 'Error interno del servidor' : error.message,
+      code: error.code ?? 'INTERNAL_ERROR',
+    });
+  });
+
   // --- Plugins de transporte -------------------------------------------------
   await fastify.register(cors, {
     // LAN hospitalaria / VPN (prd.md §2: fuera de alcance la exposición pública).
@@ -144,16 +163,6 @@ export async function buildServer() {
     // indexación/búsqueda previa (ver comentario en la instanciación de semanticProvider).
     semantic: semanticProvider.modeloEstado,
   }));
-
-  // --- Manejo centralizado de errores no capturados por las rutas -----------
-  fastify.setErrorHandler((error: FastifyError, request, reply) => {
-    request.log.error({ err: error }, 'Error no manejado en la solicitud');
-    const statusCode = error.statusCode ?? 500;
-    reply.code(statusCode).send({
-      error: statusCode >= 500 ? 'Error interno del servidor' : error.message,
-      code: error.code ?? 'INTERNAL_ERROR',
-    });
-  });
 
   fastify.addHook('onClose', async () => {
     eventsHub.dispose();
