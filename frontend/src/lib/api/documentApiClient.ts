@@ -149,4 +149,18 @@ export class DocumentApiClient {
     }
     return (await response.json()) as DocumentoRegistro;
   }
+
+  /** Reintenta render + extracción IA para un documento en ERROR_EXTRACCION (p. ej. timeout de Gemini). */
+  async retryExtraction(documentId: string, expectedVersion: number): Promise<DocumentoRegistro> {
+    const response = await fetch(`${this.options.baseUrl}/documents/${documentId}/retry-extraction`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ expectedVersion }),
+    });
+    if (!response.ok) {
+      const { error, code } = await parseErrorBody(response);
+      throw new DocumentApiError(error, response.status, code);
+    }
+    return (await response.json()) as DocumentoRegistro;
+  }
 }

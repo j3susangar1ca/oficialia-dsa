@@ -31,6 +31,7 @@ import {
   ListDocumentsReplySchema,
   RelatedDocumentsQuerystringSchema,
   RelatedDocumentsReplySchema,
+  RetryExtractionBodySchema,
   RetryRpaBodySchema,
   UploadAcceptedReplySchema,
   UploadQuerystringSchema,
@@ -255,6 +256,44 @@ export const documentRoutes: FastifyPluginAsync<DocumentRoutesOptions> = async (
           return reply.code(REPOSITORY_ERROR_STATUS[error.code]).send({ error: error.message, code: error.code });
         }
         if (error instanceof Error && /no encontrado|no está en estado ERROR_RPA/i.test(error.message)) {
+          return reply.code(409).send({ error: error.message, code: 'INVALID_STATE_FOR_RETRY' });
+        }
+        throw error;
+      }
+    },
+  });
+
+  // -------------------------------------------------------------------
+  // POST /documents/:id/retry-extraction — reintento de render + extracción IA
+  // tras ERROR_EXTRACCION (p. ej. timeout de Gemini) — antes no existía ninguna
+  // vía de recuperación para este estado más que volver a subir el PDF a mano.
+  // -------------------------------------------------------------------
+  app.route({
+    method: 'POST',
+    url: '/documents/:id/retry-extraction',
+    schema: {
+      params: DocumentIdParamsSchema,
+      body: RetryExtractionBodySchema,
+      response: {
+        200: DocumentoRegistroReplySchema,
+        404: ErrorReplySchema,
+        409: ErrorReplySchema,
+        500: ErrorReplySchema,
+        503: ErrorReplySchema,
+      },
+    },
+    handler: async (request, reply) => {
+      const { id } = request.params;
+      const { expectedVersion } = request.body;
+
+      try {
+        const updated = await orchestrator.retryExtraction(id, expectedVersion);
+        return reply.code(200).send(updated as DocumentoRegistro);
+      } catch (error) {
+        if (isTypedRepositoryError(error)) {
+          return reply.code(REPOSITORY_ERROR_STATUS[error.code]).send({ error: error.message, code: error.code });
+        }
+        if (error instanceof Error && /no encontrado|no está en estado ERROR_EXTRACCION/i.test(error.message)) {
           return reply.code(409).send({ error: error.message, code: 'INVALID_STATE_FOR_RETRY' });
         }
         throw error;
