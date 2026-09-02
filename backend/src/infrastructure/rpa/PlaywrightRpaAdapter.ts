@@ -102,6 +102,23 @@ export class RpaExecutionError extends Error implements IRpaExecutionError {
 }
 
 export class PlaywrightRpaAdapter implements IRpaInjectionProvider {
+  /**
+   * Explicaciones accionables por código, usadas SOLO por `normalizeError` para los
+   * errores clasificados automáticamente a partir de un mensaje crudo (Playwright/red) —
+   * no para los `createError(...)` explícitos de este archivo, que ya redactan el suyo.
+   */
+  private static readonly FRIENDLY_ERROR_PREFIX: Partial<Record<RpaErrorCode, string>> = {
+    INTRANET_AUTH_FAILED:
+      'Credenciales de la Intranet rechazadas por el servidor (HTTP Basic/Digest). Verifique ' +
+      'INTRANET_HTTP_USERNAME/INTRANET_HTTP_PASSWORD (o los alias RPA_INTRANET_USER/RPA_INTRANET_PASSWORD). ' +
+      'Si op_cucs.fwx usa autenticación integrada de Windows (NTLM) en vez de Basic/Digest, `httpCredentials` de ' +
+      'Playwright no es el mecanismo correcto: se requiere habilitar NTLM/Negotiate para este host ' +
+      '(flag de Chromium --auth-server-whitelist) y, normalmente, un usuario con formato DOMINIO\\usuario.',
+    INTRANET_UNREACHABLE_OR_OFFLINE:
+      'La Intranet no respondió o la red institucional (VPN/LAN hospitalaria) no es alcanzable desde este servidor.',
+    SESSION_EXPIRED: 'La sesión contra la Intranet expiró o fue rechazada (posible cierre de sesión concurrente).',
+  };
+
   constructor(
     private readonly browser: Browser,
     private readonly config: PlaywrightRpaAdapterConfig = {}
@@ -875,10 +892,17 @@ export class PlaywrightRpaAdapter implements IRpaInjectionProvider {
 
     const message = error instanceof Error ? error.message : String(error);
     const code = this.classifyError(error, message);
+    const friendlyPrefix = PlaywrightRpaAdapter.FRIENDLY_ERROR_PREFIX[code];
 
     return new RpaExecutionError({
       code,
-      message,
+      // A diferencia de los `createError(...)` explícitos de este archivo (que ya
+      // redactan su propio mensaje accionable), los errores clasificados aquí llegan
+      // con el texto crudo del proveedor/Playwright (p. ej.
+      // "page.goto: net::ERR_INVALID_AUTH_CREDENTIALS at ..."). Se antepone una
+      // explicación en español sin descartar el detalle técnico — sigue disponible en
+      // `mensajeError` para depurar, pero el capturista ve primero qué hacer.
+      message: friendlyPrefix !== undefined ? `${friendlyPrefix} Detalle: ${message}` : message,
       screenshotErrorPath,
       attemptCount,
       durationMs,

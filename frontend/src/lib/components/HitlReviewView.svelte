@@ -466,6 +466,22 @@
         </div>
       {/if}
 
+      {#if hitl.canRetryExtraction}
+        <div class="mx-5 mt-3">
+          <button
+            type="button"
+            onclick={() => hitl.retryExtraction()}
+            disabled={hitl.uiStatus.submitting}
+            class="w-full rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            ↻ Reintentar extracción de metadatos
+          </button>
+          <p class="mt-1.5 text-center text-[11px] text-slate-400">
+            Vuelve a enviar el documento al motor de IA (Gemini) — útil tras un timeout o una caída temporal del proveedor.
+          </p>
+        </div>
+      {/if}
+
       <form
         class="flex flex-col gap-5 p-5"
         onsubmit={(e) => {

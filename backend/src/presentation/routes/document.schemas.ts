@@ -142,6 +142,14 @@ export const RetryRpaBodySchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// POST /documents/:id/retry-extraction
+// ---------------------------------------------------------------------------
+
+export const RetryExtractionBodySchema = z.object({
+  expectedVersion: z.number().int().positive(),
+});
+
+// ---------------------------------------------------------------------------
 // GET /documents (bandeja de trabajo)
 // ---------------------------------------------------------------------------
 

@@ -742,6 +742,79 @@ describe('DocumentWorkflowOrchestrator', () => {
   });
 
   // ------------------------------------------------------------------
+  // Escenario de fallo de extracción (p. ej. INFERENCE_TIMEOUT de Gemini): el archivo
+  // debe terminar en storage/04_errores/ Y esa ruta debe persistirse en
+  // rutaArchivoActual — regresión de un bug real donde `updateStatus` se llamaba sin
+  // el 4º argumento tras `moveToError`, dejando el registro apuntando a un archivo ya
+  // movido (rompía el visor PDF y cualquier intento de reintento).
+  // ------------------------------------------------------------------
+
+  it('debe mover el archivo a 04_errores/ y persistir esa ruta al fallar la extracción por IA', async () => {
+    aiExtractor.extractFromPages.mockRejectedValue(
+      new Error('La inferencia excedió el límite de 45000 ms sin respuesta del proveedor.')
+    );
+    storage.moveToError.mockResolvedValue('storage/04_errores/doc-1.pdf');
+
+    await orchestrator.ingestAndExtract('SCAN_20260901_0042.pdf', 'SCANNER_ADF', pdfBuffer);
+
+    await vi.waitFor(() => expect(storage.moveToError).toHaveBeenCalled());
+    expect(storage.moveToError).toHaveBeenCalledWith('storage/02_en_proceso/doc-1.pdf', 'EXTRACTION_PIPELINE_ERROR');
+
+    await vi.waitFor(() =>
+      expect(repository.updateStatus).toHaveBeenCalledWith(
+        'doc-1',
+        'ERROR_EXTRACCION',
+        expect.any(Number),
+        'storage/04_errores/doc-1.pdf'
+      )
+    );
+  });
+
+  // ------------------------------------------------------------------
+  // Escenario de reintento de extracción tras ERROR_EXTRACCION
+  // ------------------------------------------------------------------
+
+  it('retryExtraction debe reintentar render + IA tras ERROR_EXTRACCION y completar en PENDIENTE_REVISION', async () => {
+    const erroredDoc = buildDocument({
+      id: 'doc-err-ext',
+      estado: 'ERROR_EXTRACCION',
+      version: 3,
+      rutaArchivoActual: 'storage/04_errores/doc-err-ext.pdf'
+    });
+
+    repository.findById.mockResolvedValue(erroredDoc);
+    storage.moveToInProcess.mockResolvedValue('storage/02_en_proceso/doc-err-ext.pdf');
+    storage.readFile.mockResolvedValue(new Uint8Array([7, 8, 9]));
+
+    await orchestrator.retryExtraction('doc-err-ext', 3);
+
+    expect(storage.moveToInProcess).toHaveBeenCalledWith('storage/04_errores/doc-err-ext.pdf', 'doc-err-ext');
+    expect(repository.updateStatus).toHaveBeenCalledWith(
+      'doc-err-ext',
+      'PENDIENTE_EXTRACCION',
+      3,
+      'storage/02_en_proceso/doc-err-ext.pdf'
+    );
+
+    await vi.waitFor(() => expect(aiExtractor.extractFromPages).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(repository.updateExtractedMetadata).toHaveBeenCalledTimes(1));
+
+    expect(repository.updateExtractedMetadata).toHaveBeenCalledWith(
+      'doc-err-ext',
+      validMetadata,
+      'PENDIENTE_REVISION',
+      expect.any(Number)
+    );
+  });
+
+  it('retryExtraction debe rechazar documentos que no están en ERROR_EXTRACCION', async () => {
+    repository.findById.mockResolvedValue(buildDocument({ id: 'doc-1', estado: 'PENDIENTE_REVISION' }));
+
+    await expect(orchestrator.retryExtraction('doc-1', 1)).rejects.toThrow(/no está en estado ERROR_EXTRACCION/i);
+    expect(storage.moveToInProcess).not.toHaveBeenCalled();
+  });
+
+  // ------------------------------------------------------------------
   // Puerto 7 (ILocalSemanticProvider, P1): indexación en segundo plano tras HITL
   // ------------------------------------------------------------------
 

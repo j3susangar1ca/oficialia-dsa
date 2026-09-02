@@ -155,8 +155,17 @@ export class DocumentWorkflowOrchestrator {
       );
       this.emit(readyForReview.id, readyForReview.estado, readyForReview);
     } catch (error) {
-      await this.storage.moveToError(inProcessPath, 'EXTRACTION_PIPELINE_ERROR');
-      const errored = await this.repository.updateStatus(currentRecord.id, 'ERROR_EXTRACCION', currentRecord.version);
+      // `moveToError` MUEVE físicamente el archivo a storage/04_errores/ — hay que
+      // persistir esa nueva ruta (4º argumento) o `rutaArchivoActual` queda apuntando al
+      // path viejo en 02_en_proceso/, ya inexistente: GET /:id/file (visor PDF) y
+      // `retryExtraction` (abajo) fallarían al intentar leer un archivo que ya no está ahí.
+      const errorPath = await this.storage.moveToError(inProcessPath, 'EXTRACTION_PIPELINE_ERROR');
+      const errored = await this.repository.updateStatus(
+        currentRecord.id,
+        'ERROR_EXTRACCION',
+        currentRecord.version,
+        errorPath
+      );
       this.emit(errored.id, errored.estado, errored);
       this.events?.onPipelineError(
         currentRecord.id,
@@ -348,6 +357,38 @@ export class DocumentWorkflowOrchestrator {
 
     this.executeOutputWorkers(currentRecord, currentRecord.rutaArchivoActual).catch((err) => {
       console.error(`[BackgroundRetryError] Fallo en reintento RPA del documento ${documentId}:`, err);
+    });
+
+    return currentRecord;
+  }
+
+  /**
+   * Flujo de Reintento: reejecuta render + extracción IA para documentos en
+   * ERROR_EXTRACCION, sin re-solicitar el archivo (ya está sanitizado en
+   * storage/04_errores/, movido ahí por `continueExtractionInBackground`). Antes de esta
+   * entrega, un documento que llegaba a ERROR_EXTRACCION (p. ej. por timeout de Gemini)
+   * quedaba varado sin ninguna vía de recuperación salvo volver a subir el PDF a mano.
+   */
+  async retryExtraction(documentId: string, expectedVersion: number): Promise<Readonly<DocumentoRegistro>> {
+    const document = await this.repository.findById(documentId);
+    if (!document) throw new Error(`Documento no encontrado: ${documentId}`);
+    if (document.estado !== 'ERROR_EXTRACCION') {
+      throw new Error(`El documento no está en estado ERROR_EXTRACCION (Estado actual: ${document.estado})`);
+    }
+
+    // Vuelve a colocar el archivo en 02_en_proceso/ (venía de 04_errores/ tras el fallo previo).
+    const inProcessPath = await this.storage.moveToInProcess(document.rutaArchivoActual, documentId);
+    const currentRecord = await this.repository.updateStatus(
+      documentId,
+      'PENDIENTE_EXTRACCION',
+      expectedVersion,
+      inProcessPath
+    );
+    this.emit(currentRecord.id, currentRecord.estado, currentRecord);
+
+    const sanitizedBuffer = await this.storage.readFile(inProcessPath);
+    this.continueExtractionInBackground(currentRecord, sanitizedBuffer, inProcessPath).catch((err) => {
+      console.error(`[BackgroundRetryError] Fallo en reintento de extracción del documento ${documentId}:`, err);
     });
 
     return currentRecord;

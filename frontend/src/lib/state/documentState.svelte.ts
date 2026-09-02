@@ -127,6 +127,9 @@ export class DocumentHitlState {
 
   canRetryRpa = $derived(this.document.record?.estado === 'ERROR_RPA' && !this.uiStatus.submitting);
 
+  /** ERROR_EXTRACCION (p. ej. timeout de Gemini): reintenta render + IA, no requiere metadatos. */
+  canRetryExtraction = $derived(this.document.record?.estado === 'ERROR_EXTRACCION' && !this.uiStatus.submitting);
+
   /** Progreso visual (0–100) del pipeline, derivado del estado del WebSocket. */
   pipelineProgress = $derived.by((): number => {
     const estado = this.document.record?.estado;
@@ -292,6 +295,32 @@ export class DocumentHitlState {
 
     try {
       const updated = await this.api.retryRpa(this.document.record.id, this.document.record.version);
+      this.applyRecord(updated);
+    } catch (error) {
+      this.uiStatus.error = this.describeError(error);
+      this.uiStatus.locked = false;
+    } finally {
+      this.uiStatus.submitting = false;
+    }
+  }
+
+  /**
+   * Dispara `POST /:id/retry-extraction` con la misma protección de doble-tap — única
+   * vía de recuperación para ERROR_EXTRACCION (p. ej. INFERENCE_TIMEOUT de Gemini) sin
+   * volver a subir el PDF a mano.
+   */
+  async retryExtraction(): Promise<void> {
+    const now = Date.now();
+    if (now < this.submitLockUntil || this.uiStatus.submitting) return;
+    if (!this.canRetryExtraction || !this.document.record) return;
+
+    this.submitLockUntil = now + SUBMIT_DEBOUNCE_MS;
+    this.uiStatus.submitting = true;
+    this.uiStatus.locked = true;
+    this.uiStatus.error = null;
+
+    try {
+      const updated = await this.api.retryExtraction(this.document.record.id, this.document.record.version);
       this.applyRecord(updated);
     } catch (error) {
       this.uiStatus.error = this.describeError(error);
