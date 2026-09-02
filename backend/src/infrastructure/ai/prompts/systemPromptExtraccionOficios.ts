@@ -3,7 +3,7 @@
  * System Prompt de Extracción Multimodal de Oficios (Gemini 2.5 Flash)
  * Versión: 1.0.0-MVP
  *
- * Fuente canónica: /system_prompt.md (raíz del repositorio). Cambios al
+ * Fuente canónica: /docs/system_prompt.md. Cambios al
  * protocolo de lectura OCR, reglas de campo o restricciones de formato deben
  * editarse primero ahí y replicarse aquí.
  */

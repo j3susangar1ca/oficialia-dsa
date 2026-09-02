@@ -1,0 +1,20 @@
+{
+  "name": "oficialia-digital-dsa",
+  "version": "1.0.0-mvp",
+  "private": true,
+  "description": "Oficialia-Digital-DSA — middleware de ingesta, extracción IA y RPA (Hospital Civil de Guadalajara). Monorepo: backend (Fastify) + frontend (Svelte 5).",
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev:backend": "npm run dev --workspace=backend",
+    "build:backend": "npm run build --workspace=backend",
+    "typecheck:backend": "npm run typecheck --workspace=backend",
+    "check:frontend": "npm run check --workspace=frontend",
+    "typecheck": "npm run typecheck:backend && npm run check:frontend"
+  }
+}

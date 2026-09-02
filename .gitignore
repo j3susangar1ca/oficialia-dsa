@@ -1,0 +1,16 @@
+node_modules/
+dist/
+build/
+.svelte-kit/
+*.log
+.env
+.env.local
+.DS_Store
+
+# Datos/artefactos runtime del backend cuando se ejecuta desde la raíz del workspace
+backend/data/
+backend/storage/01_entrada/*
+backend/storage/02_en_proceso/*
+backend/storage/03_procesados/*
+backend/storage/04_errores/*
+!backend/storage/**/.gitkeep

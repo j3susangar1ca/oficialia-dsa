@@ -3,7 +3,7 @@
  * Definiciones de Tipos Centralizadas y Modelo de Dominio
  * Versión: 1.0.0-MVP
  *
- * Fuente canónica: /types.md (raíz del repositorio). No duplicar ni redefinir
+ * Fuente canónica: /docs/types.md. No duplicar ni redefinir
  * estos tipos fuera de este archivo — el resto de las capas (aplicación,
  * infraestructura, presentación) deben importar desde aquí.
  */

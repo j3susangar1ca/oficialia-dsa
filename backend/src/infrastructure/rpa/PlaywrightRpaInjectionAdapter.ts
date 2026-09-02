@@ -10,7 +10,7 @@
  * para poder componer el servidor Fastify. La automatización real contra
  * `https://sii.hcg.gob.mx/intranet/op_cucs.fwx` (mapeo de selectores Webix, credenciales
  * institucionales, captura de acuse) es un desarrollo propio de Playwright fuera del
- * alcance de esta tarea — ver `webix_dump_for_qwen.json` como insumo de mapeo de campos
+ * alcance de esta tarea — ver `/docs/rpa/webix_dump_for_qwen.json` como insumo de mapeo de campos
  * cuando se implemente. Este adaptador cumple el contrato exactamente (misma forma,
  * mismos códigos de error tipados) para que:
  *   1. El servidor arranque y tipe correctamente vía Inyección de Dependencias.
