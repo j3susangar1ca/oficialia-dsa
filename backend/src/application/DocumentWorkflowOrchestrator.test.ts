@@ -7,7 +7,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 
-import { DocumentWorkflowOrchestrator } from '../application/DocumentWorkflowOrchestrator';
+import { DocumentWorkflowOrchestrator } from './DocumentWorkflowOrchestrator';
 
 import type {
   DocumentoRegistro,
@@ -16,7 +16,7 @@ import type {
   RpaEjecucion,
   GoogleSheetsSync,
   DocumentoEstado
-} from '../domain/types';
+} from '../contracts/types';
 
 import type { IFileStorageProvider } from '../contracts/IFileStorageProvider';
 import type {
@@ -150,8 +150,6 @@ describe('DocumentWorkflowOrchestrator', () => {
   let aiExtractor: Mocked<IAIExtractorProvider>;
   let rpa: Mocked<IRpaInjectionProvider>;
   let externalSync: Mocked<IExternalSyncProvider>;
-
-  let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
 
   const pdfBuffer = new Uint8Array([1, 2, 3]);
 
@@ -367,7 +365,9 @@ describe('DocumentWorkflowOrchestrator', () => {
       externalSync as unknown as IExternalSyncProvider
     );
 
-    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    // Silencia el console.error del orquestador durante el escenario de duplicado /
+    // fallo RPA sin necesitar aserciones sobre el spy en sí.
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
   });
 
   afterEach(() => {
@@ -378,20 +378,28 @@ describe('DocumentWorkflowOrchestrator', () => {
   // Escenario exitoso: ingesta + extracción => PENDIENTE_REVISION
   // ------------------------------------------------------------------
 
-  it('debe ingerir un PDF, extraer metadatos con IA y dejar el documento en PENDIENTE_REVISION', async () => {
+  it('debe ingerir un PDF y dejar el documento en PENDIENTE_EXTRACCION, extrayendo metadatos con IA en segundo plano hasta PENDIENTE_REVISION', async () => {
+    // `ingestAndExtract` resuelve tan pronto el documento queda bloqueado en
+    // 02_en_proceso/ y tipado en BD (PENDIENTE_EXTRACCION) — ver el docstring de
+    // `DocumentWorkflowOrchestrator.ingestAndExtract` sobre la desviación deliberada
+    // respecto al boceto síncrono original. El render + extracción por Gemini continúa
+    // en `continueExtractionInBackground` (fire-and-forget) y se observa aquí vía
+    // `vi.waitFor` sobre las mismas mutaciones que dispararía el WebSocket en producción.
     const result = await orchestrator.ingestAndExtract(
       'SCAN_20260901_0042.pdf',
       'SCANNER_ADF',
       pdfBuffer
     );
 
-    expect(result.estado).toBe('PENDIENTE_REVISION');
-    expect(result.metadatosExtraidos).toEqual(validMetadata);
+    expect(result.estado).toBe('PENDIENTE_EXTRACCION');
+    expect(result.metadatosExtraidos).toBeNull();
 
     expect(storage.saveIncoming).toHaveBeenCalledWith('SCAN_20260901_0042.pdf', pdfBuffer);
     expect(pdfProcessor.inspectAndSanitize).toHaveBeenCalledWith(pdfBuffer);
     expect(repository.findByHash).toHaveBeenCalledWith(preproceso.sha256Hash);
     expect(repository.create).toHaveBeenCalled();
+
+    await vi.waitFor(() => expect(aiExtractor.extractFromPages).toHaveBeenCalledTimes(1));
 
     expect(aiExtractor.extractFromPages).toHaveBeenCalledWith(
       [],
@@ -399,6 +407,8 @@ describe('DocumentWorkflowOrchestrator', () => {
         contextYear: expect.any(Number)
       })
     );
+
+    await vi.waitFor(() => expect(repository.updateExtractedMetadata).toHaveBeenCalledTimes(1));
 
     expect(repository.updateExtractedMetadata).toHaveBeenCalledWith(
       'doc-1',

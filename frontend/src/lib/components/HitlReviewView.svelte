@@ -193,7 +193,11 @@
     cargandoPdf = true;
     pdfError = null;
     try {
-      const params: pdfjsLib.DocumentInitParameters =
+      // Se deriva el tipo de parámetros directamente de `getDocument` (en vez de
+      // `pdfjsLib.DocumentInitParameters`, no exportado en todas las versiones de
+      // pdfjs-dist) para no acoplarse a un nombre de tipo que puede cambiar entre
+      // releases del paquete.
+      const params: Parameters<typeof pdfjsLib.getDocument>[0] =
         src instanceof ArrayBuffer
           ? { data: new Uint8Array(src) }
           : { url: src };
@@ -424,7 +428,7 @@
     tocadas = { ...tocadas, [campo]: true };
   }
   function errVisible(campo: string): string | null {
-    return tocadas[campo] ? (errores as Record<string, string | null>)[campo] : null;
+    return tocadas[campo] ? ((errores as Record<string, string | null>)[campo] ?? null) : null;
   }
 
   // Plazo: el input numérico puede quedar vacío -> null.

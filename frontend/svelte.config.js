@@ -1,4 +1,8 @@
-// Sin componentes .svelte en esta entrega (solo el store de runes .svelte.ts), por lo que
-// no se requiere ningún preprocesador. Añadir @sveltejs/vite-plugin-svelte + vitePreprocess()
-// aquí cuando se incorporen componentes .svelte reales (visor PDF.js, formulario HITL).
-export default {};
+// Componentes .svelte reales incorporados (HitlReviewView + App) — se requiere
+// vitePreprocess() para que svelte-check y Vite resuelvan TypeScript/PostCSS dentro de
+// bloques <script lang="ts"> y <style>.
+import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
+
+export default {
+  preprocess: vitePreprocess(),
+};

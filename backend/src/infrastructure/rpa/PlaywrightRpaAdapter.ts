@@ -3,7 +3,26 @@
  * Adaptador RPA Playwright para integración con Intranet SII HCG (op_cucs.fwx)
  * Implementa: IRpaInjectionProvider
  * Versión: 1.0.0-MVP
+ *
+ * Implementación real (no placeholder) de la automatización Webix descrita en
+ * `docs/rpa/webix_dump_for_qwen.json`: navega a `op_cucs.fwx`, resuelve el iframe
+ * `op_ningr.fwx`, rellena los controles Webix por `view id` (cve, nume_cont, fech_ofic,
+ * remi_nomb, dest_nomb, asunto, dependen, tipo_ofic, …) y extrae el folio de acuse.
+ *
+ * No sustituye por defecto al `PlaywrightRpaInjectionAdapter` (placeholder) en el
+ * composition root (`server.ts`): requiere un `Browser` de Playwright ya lanzado y
+ * credenciales/selectores validados contra la Intranet real. Se activa explícitamente
+ * con `RPA_MODE=playwright` (ver `presentation/config/env.ts` y `.env.example`) — sin
+ * esa variable, el servidor sigue arrancando con el stub honesto que reporta
+ * `checkIntranetHealth() === false`.
+ *
+ * `tsconfig.json` del backend usa `lib: ["ES2023"]` (sin DOM, correcto para un proceso
+ * Node). Las funciones pasadas a `frame.evaluate()`/`page.evaluate()` en este archivo,
+ * en cambio, se serializan y ejecutan DENTRO del navegador (contexto Webix), donde
+ * `window`/`document` sí existen — de ahí esta referencia local, que no afecta al
+ * resto del backend.
  */
+/// <reference lib="dom" />
 
 import type {
   Browser,
@@ -18,14 +37,14 @@ import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 
-import type { MetadatosOficio, RpaEjecucion } from '../domain/types';
+import type { MetadatosOficio, RpaEjecucion } from '../../contracts/types';
 import type {
   IRpaInjectionProvider,
   RpaInjectionPayload,
   RpaExecutionOptions,
   RpaErrorCode,
   RpaExecutionError as IRpaExecutionError
-} from '../contracts/IRpaInjectionProvider';
+} from '../../contracts/IRpaInjectionProvider';
 
 const INTRANET_DEFAULT_BASE_URL = 'https://sii.hcg.gob.mx/intranet/op_cucs.fwx';
 const FRAME_SELECTOR = 'iframe[src*="op_ningr.fwx"]';
@@ -232,14 +251,16 @@ export class PlaywrightRpaAdapter implements IRpaInjectionProvider {
         'acuse'
       );
 
+      // `intentos` y `duracionMs` los añade `executeWithRetries` al desenvolver esta
+      // promesa (ahí se conoce el número de intento real y la duración total con
+      // reintentos incluidos) — de ahí el `Omit<RpaEjecucion, 'intentos' | 'duracionMs'>`
+      // en la firma de este método.
       return {
         id: executionId,
         documentoId: payload.documentId,
         folioAcuseInstitucional: folio,
         fechaEjecucion: new Date().toISOString(),
-        duracionMs: Date.now() - startedAt,
         capturaAcusePath,
-        intentos: attemptNumber,
         mensajeError: null,
         exitoso: true
       };
@@ -550,7 +571,7 @@ export class PlaywrightRpaAdapter implements IRpaInjectionProvider {
 
         control.setValue(val);
       },
-      [viewId, value]
+      [viewId, value] as [string, WebixValue]
     );
   }
 
@@ -604,7 +625,7 @@ export class PlaywrightRpaAdapter implements IRpaInjectionProvider {
 
         control.setValue(searchText);
       },
-      [viewId, text]
+      [viewId, text] as [string, string]
     );
   }
 

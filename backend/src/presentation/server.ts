@@ -20,11 +20,14 @@ import multipart from '@fastify/multipart';
 import websocket from '@fastify/websocket';
 import Fastify, { type FastifyError } from 'fastify';
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fastify-type-provider-zod';
+import { chromium, type Browser } from 'playwright';
 
 import { DocumentWorkflowOrchestrator } from '../application/DocumentWorkflowOrchestrator';
+import type { IRpaInjectionProvider } from '../contracts/IRpaInjectionProvider';
 import { GeminiAIExtractorAdapter } from '../infrastructure/ai/GeminiAIExtractorAdapter';
 import { PythonPdfProcessorAdapter } from '../infrastructure/pdf/PythonPdfProcessorAdapter';
 import { SqliteDocumentRepository } from '../infrastructure/persistence/SqliteDocumentRepository';
+import { PlaywrightRpaAdapter } from '../infrastructure/rpa/PlaywrightRpaAdapter';
 import { PlaywrightRpaInjectionAdapter } from '../infrastructure/rpa/PlaywrightRpaInjectionAdapter';
 import { LocalFileStorageAdapter } from '../infrastructure/storage/LocalFileStorageAdapter';
 import { GoogleSheetsExternalSyncAdapter } from '../infrastructure/sync/GoogleSheetsExternalSyncAdapter';
@@ -80,7 +83,19 @@ export async function buildServer() {
     schema: MetadatosOficioSchema,
     apiKey: env.geminiApiKey,
   });
-  const rpaInjection = new PlaywrightRpaInjectionAdapter();
+  // RPA: 'stub' (default) mantiene el placeholder honesto que nunca lanza un navegador;
+  // 'playwright' (RPA_MODE=playwright) activa la automatización real contra op_cucs.fwx.
+  // Ver docstrings de env.ts y de PlaywrightRpaAdapter para los requisitos de cada modo.
+  let rpaInjection: IRpaInjectionProvider;
+  let rpaBrowser: Browser | undefined;
+
+  if (env.rpaMode === 'playwright') {
+    rpaBrowser = await chromium.launch({ headless: env.rpaHeadless });
+    rpaInjection = new PlaywrightRpaAdapter(rpaBrowser, { storageRoot: env.storageRoot });
+  } else {
+    rpaInjection = new PlaywrightRpaInjectionAdapter();
+  }
+
   const externalSync = new GoogleSheetsExternalSyncAdapter();
 
   const orchestrator = new DocumentWorkflowOrchestrator(
@@ -130,6 +145,7 @@ export async function buildServer() {
   fastify.addHook('onClose', async () => {
     eventsHub.dispose();
     repository.close();
+    await rpaBrowser?.close().catch(() => undefined);
   });
 
   return { fastify, env };

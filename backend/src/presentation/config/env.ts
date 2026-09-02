@@ -7,6 +7,9 @@
  * (`.env` con `chmod 600` en el servidor local), nunca hardcodeadas.
  */
 
+/** Selección del adaptador `IRpaInjectionProvider` cableado en el composition root. */
+export type RpaMode = 'stub' | 'playwright';
+
 export interface AppEnv {
   port: number;
   host: string;
@@ -16,6 +19,16 @@ export interface AppEnv {
   pdfWorkerScriptPath: string;
   geminiApiKey: string | undefined;
   maxUploadBytes: number;
+  /**
+   * `'stub'` (default): usa `PlaywrightRpaInjectionAdapter`, que nunca lanza un
+   * navegador y reporta `checkIntranetHealth() === false` honestamente.
+   * `'playwright'`: usa `PlaywrightRpaAdapter` (automatización real contra
+   * `op_cucs.fwx`) — requiere `npm run rpa:install-browsers` y credenciales/CVEs de
+   * Intranet en `.env` (ver `.env.example`).
+   */
+  rpaMode: RpaMode;
+  /** Navegador Playwright visible (para depuración) cuando `rpaMode === 'playwright'`. */
+  rpaHeadless: boolean;
 }
 
 function readNumber(name: string, fallback: number): number {
@@ -23,6 +36,12 @@ function readNumber(name: string, fallback: number): number {
   if (raw === undefined || raw.trim() === '') return fallback;
   const parsed = Number(raw);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function readBoolean(name: string, fallback: boolean): boolean {
+  const raw = process.env[name]?.trim().toLowerCase();
+  if (raw === undefined || raw === '') return fallback;
+  return raw === 'true' || raw === '1';
 }
 
 export function loadEnv(): AppEnv {
@@ -35,5 +54,7 @@ export function loadEnv(): AppEnv {
     pdfWorkerScriptPath: process.env.PDF_WORKER_SCRIPT_PATH ?? 'scripts/pdf_worker.py',
     geminiApiKey: process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY,
     maxUploadBytes: readNumber('MAX_UPLOAD_BYTES', 25 * 1024 * 1024), // 25 MB por oficio
+    rpaMode: process.env.RPA_MODE === 'playwright' ? 'playwright' : 'stub',
+    rpaHeadless: readBoolean('RPA_HEADLESS', true),
   };
 }
