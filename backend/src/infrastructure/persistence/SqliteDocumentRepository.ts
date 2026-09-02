@@ -125,6 +125,13 @@ export interface SqliteDocumentRepositoryOptions {
   databasePath?: string;
   /** Ruta al DDL (`schema.sql`); se ejecuta al abrir la conexión si las tablas no existen. */
   schemaPath?: string;
+  /**
+   * Ruta al DDL del puerto 7 (`embeddings_schema.sql` — tabla `documentos_embeddings`,
+   * ver `docs/contracts.md` §"Puerto 7"). Se ejecuta sobre la misma conexión/archivo
+   * .db, después de `schema.sql` (depende de `documentos` vía FK). `null` desactiva su
+   * ejecución (p. ej. en tests que no necesitan el puerto semántico).
+   */
+  embeddingsSchemaPath?: string | null;
 }
 
 export class SqliteDocumentRepository implements IDocumentRepository {
@@ -137,10 +144,26 @@ export class SqliteDocumentRepository implements IDocumentRepository {
     this.db = new Database(databasePath);
     const schemaPath = options.schemaPath ?? path.resolve(__dirname, 'schema.sql');
     this.db.exec(fs.readFileSync(schemaPath, 'utf-8'));
+
+    const embeddingsSchemaPath =
+      options.embeddingsSchemaPath === null ? null : (options.embeddingsSchemaPath ?? path.resolve(__dirname, 'embeddings_schema.sql'));
+    if (embeddingsSchemaPath) {
+      this.db.exec(fs.readFileSync(embeddingsSchemaPath, 'utf-8'));
+    }
   }
 
   close(): void {
     this.db.close();
+  }
+
+  /**
+   * Expone la conexión better-sqlite3 subyacente para que el composition root
+   * (`presentation/server.ts`) pueda inyectarla en `LocalSemanticMatcherAdapter`
+   * (puerto `ILocalSemanticProvider`, P1) sin abrir una segunda conexión al mismo
+   * archivo .db — better-sqlite3 es síncrono y de un solo hilo por conexión.
+   */
+  getRawDatabase(): Database.Database {
+    return this.db;
   }
 
   async create(document: CreateDocumentRecordDTO): Promise<Readonly<DocumentoRegistro>> {

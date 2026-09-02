@@ -1044,7 +1044,7 @@ sequenceDiagram
 
 ---
 
-Con esto hemos completado los 6 contratos de infraestructura identificados:
+Con esto hemos completado los 6 contratos de infraestructura del pipeline principal:
 
 1. `IFileStorageProvider` (E/S y archivo canónico)
 
@@ -1063,6 +1063,146 @@ Con esto hemos completado los 6 contratos de infraestructura identificados:
 
 6. `IExternalSyncProvider` (Google Sheets API v4)
 
+
+A ellos se suma un séptimo puerto, añadido en Fase Complementaria P1 (ver prd.md §2.2):
+
+7. `ILocalSemanticProvider` (Búsqueda semántica local — Xenova/bge-m3 sobre ONNX Runtime)
+
+---
+
+## Puerto 7: `ILocalSemanticProvider` (Vinculación Semántica Local, P1)
+
+### 1. Definición de Interfaz (TypeScript)
+
+```typescript
+/**
+ * SISTEMA OFICIALIA-DIGITAL-DSA
+ * Contrato de Búsqueda Semántica Local (Puerto Secundario)
+ * Versión: 1.0.0
+ *
+ * Cumplimiento: LGPDPPSO — Procesamiento 100% local, sin llamadas a APIs externas.
+ */
+
+/** Estado del ciclo de vida del modelo de inferencia */
+export type ModeloEstado = 'NO_INICIALIZADO' | 'CARGANDO' | 'LISTO' | 'ERROR_INFERENCIA';
+
+/** Dimensión del vector de embedding generado por bge-m3 (1024 floats) */
+export const BGE_M3_EMBEDDING_DIM = 1024;
+
+export interface DocumentoRelacionado {
+  documentoId: string;
+  nombreArchivoCanonico: string | null;
+  numeroOficio: string | null;
+  dependenciaArea: string | null;
+  asunto: string | null;
+  /** Similitud coseno en [0, 1] — 1 indica coincidencia exacta */
+  similitudScore: number;
+  /** true cuando similitudScore >= umbralVinculacion (default 0.85) */
+  esCandidatoVinculacion: boolean;
+}
+
+export interface BusquedaSemanticaParams {
+  textoConsulta: string;
+  excluirDocumentoId?: string;
+  limite?: number; // default 10
+  umbralVinculacion?: number; // default 0.85
+}
+
+export interface ResultadoBusquedaSemantica {
+  documentos: DocumentoRelacionado[];
+  totalVectoresComparados: number;
+  duracionMs: number;
+  modeloEstado: ModeloEstado;
+}
+
+export interface DocumentStringInput {
+  dependenciaArea: string;
+  remitenteNombre: string;
+  asunto: string;
+}
+
+export interface EmbeddingRecord {
+  id: number;
+  documentoId: string;
+  vectorBlob: Buffer;
+  dimension: number;
+  documentString: string;
+  contentHash: string;
+  creadoEn: string;
+}
+
+/**
+ * Descripción del Contrato: ILocalSemanticProvider
+ * Propósito: identificar oficios relacionados por similitud semántica (mismo asunto,
+ * remitente o dependencia expresados con distinta redacción) sin depender de un match
+ * exacto de folio/hash, usando un modelo de embeddings ejecutado 100% en el servidor
+ * local de la DSA (sin llamadas a APIs externas — requisito LGPDPPSO).
+ *
+ * Implementaciones deben garantizar:
+ * - Inicialización perezosa del modelo ONNX (no se carga hasta la primera llamada).
+ * - Si el modelo no está en estado LISTO, `searchSimilar` retorna un resultado con
+ *   array vacío en lugar de lanzar excepción — nunca bloquea el pipeline principal.
+ */
+export interface ILocalSemanticProvider {
+  readonly modeloEstado: ModeloEstado;
+  initialize(): Promise<void>;
+  generateEmbedding(input: DocumentStringInput): Promise<Float32Array>;
+  indexDocument(documentoId: string, input: DocumentStringInput): Promise<EmbeddingRecord>;
+  batchIndex(lote: Array<[string, DocumentStringInput]>): Promise<number>;
+  searchSimilar(params: BusquedaSemanticaParams): Promise<ResultadoBusquedaSemantica>;
+  removeEmbedding(documentoId: string): Promise<boolean>;
+  countEmbeddings(): number;
+}
+```
+
+Implementación de referencia: `LocalSemanticMatcherAdapter` (`backend/src/infrastructure/semantic/`),
+sobre `@xenova/transformers` (modelo `Xenova/bge-m3`, cuantizado) y `better-sqlite3` para
+la persistencia de vectores (`documentos_embeddings`, ver `embeddings_schema.sql`).
+
+---
+
+### 2. Flujo Lógico (Mermaid)
+
+La indexación ocurre en segundo plano tras la confirmación HITL (mismo patrón
+fire-and-forget que `IRpaInjectionProvider`/`IExternalSyncProvider`: un fallo de
+inferencia local nunca bloquea el pipeline principal). La búsqueda es bajo demanda,
+disparada por la UI HITL o por `GET /documents/:id/related`.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Pipeline as DocumentWorkflowOrchestrator
+    participant Semantic as ILocalSemanticProvider
+    participant Model as bge-m3 (ONNX Runtime, local)
+    participant DB as SQLite (documentos_embeddings)
+    participant UI as HITL Split-Screen
+
+    rect rgb(240, 255, 240)
+        note right of Pipeline: Indexación en segundo plano (post-confirmHitlAndExecutePipeline)
+        Pipeline->>Semantic: indexDocument(documentoId, {dependenciaArea, remitenteNombre, asunto})
+        Semantic->>Semantic: initialize() perezoso (si modeloEstado !== LISTO)
+        Semantic->>Model: generateEmbedding(documentString)
+        Model-->>Semantic: Float32Array[1024] normalizado L2
+        Semantic->>DB: INSERT/UPDATE documentos_embeddings (idempotente por content_hash)
+    end
+
+    rect rgb(240, 248, 255)
+        note right of UI: Búsqueda bajo demanda
+        UI->>Pipeline: GET /documents/:id/related
+        Pipeline->>Semantic: searchSimilar({textoConsulta, excluirDocumentoId: id})
+        alt modeloEstado === LISTO
+            Semantic->>Model: generateEmbedding(consulta)
+            Semantic->>DB: SELECT vectores, similitud coseno en memoria
+            Semantic-->>Pipeline: ResultadoBusquedaSemantica (documentos ordenados)
+        else modelo no listo (arranque en frío / error de inferencia)
+            Semantic-->>Pipeline: { documentos: [], modeloEstado: 'CARGANDO' | 'ERROR_INFERENCIA' }
+            note right of Semantic: Nunca lanza excepción — la UI degrada mostrando "sin sugerencias" en vez de romper
+        end
+        Pipeline-->>UI: ResultadoBusquedaSemantica
+    end
+```
+
+---
 
 ### 1. Implementación de la Capa de Aplicación (TypeScript)
 

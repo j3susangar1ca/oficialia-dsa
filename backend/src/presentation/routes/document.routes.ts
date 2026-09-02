@@ -29,6 +29,8 @@ import {
   ErrorReplySchema,
   ListDocumentsQuerystringSchema,
   ListDocumentsReplySchema,
+  RelatedDocumentsQuerystringSchema,
+  RelatedDocumentsReplySchema,
   RetryRpaBodySchema,
   UploadAcceptedReplySchema,
   UploadQuerystringSchema,
@@ -99,6 +101,25 @@ export const documentRoutes: FastifyPluginAsync<DocumentRoutesOptions> = async (
         return reply.code(404).send({ error: 'Documento no encontrado', code: 'DOCUMENT_NOT_FOUND' });
       }
       return reply.code(200).send(document as DocumentoRegistro);
+    },
+  });
+
+  // -------------------------------------------------------------------
+  // GET /documents/:id/related — oficios relacionados por similitud semántica
+  // (Puerto 7, ILocalSemanticProvider, P1 — ver docs/prd.md §2.2). Nunca lanza
+  // ERROR_INFERENCIA/arranque-en-frío al cliente: degrada a `documentos: []`.
+  // -------------------------------------------------------------------
+  app.route({
+    method: 'GET',
+    url: '/documents/:id/related',
+    schema: {
+      params: DocumentIdParamsSchema,
+      querystring: RelatedDocumentsQuerystringSchema,
+      response: { 200: RelatedDocumentsReplySchema },
+    },
+    handler: async (request, reply) => {
+      const result = await orchestrator.findRelatedDocuments(request.params.id, request.query);
+      return reply.code(200).send(result);
     },
   });
 
