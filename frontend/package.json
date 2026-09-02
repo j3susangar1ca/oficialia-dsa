@@ -1,0 +1,18 @@
+{
+  "name": "oficialia-dsa-frontend",
+  "version": "1.0.0-mvp",
+  "private": true,
+  "description": "Oficialia-Digital-DSA — UI Split-Screen HITL (Svelte 5 + Runes + PDF.js).",
+  "type": "module",
+  "scripts": {
+    "check": "svelte-check --tsconfig ./tsconfig.json"
+  },
+  "dependencies": {
+    "zod": "^4.1.5"
+  },
+  "devDependencies": {
+    "svelte": "^5.2.9",
+    "svelte-check": "^4.1.0",
+    "typescript": "^5.7.2"
+  }
+}

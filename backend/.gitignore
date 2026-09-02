@@ -1,0 +1,11 @@
+node_modules/
+dist/
+data/
+.env
+*.log
+
+storage/01_entrada/*
+storage/02_en_proceso/*
+storage/03_procesados/*
+storage/04_errores/*
+!storage/**/.gitkeep
