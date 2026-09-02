@@ -10,7 +10,7 @@
  */
 
 import type { MetadatosOficioDraft } from '../schemas/metadatosOficio.schema';
-import type { DocumentoRegistro } from '../types';
+import type { DocumentoRegistro, RelatedDocumentsResult } from '../types';
 
 export class DocumentApiError extends Error {
   constructor(
@@ -96,6 +96,28 @@ export class DocumentApiClient {
       throw new DocumentApiError(error, response.status, code);
     }
     return (await response.json()) as DocumentoRegistro;
+  }
+
+  /**
+   * Oficios relacionados por similitud semántica (Puerto 7, `ILocalSemanticProvider`,
+   * P1 — ver `docs/prd.md` §2.2). Nunca falla por "modelo no listo": el backend degrada
+   * a `documentos: []` con `modeloEstado` reflejando el estado real.
+   */
+  async getRelatedDocuments(
+    documentId: string,
+    options?: { limite?: number; umbralVinculacion?: number }
+  ): Promise<RelatedDocumentsResult> {
+    const query = new URLSearchParams();
+    if (options?.limite !== undefined) query.set('limite', String(options.limite));
+    if (options?.umbralVinculacion !== undefined) query.set('umbralVinculacion', String(options.umbralVinculacion));
+    const suffix = query.toString() ? `?${query.toString()}` : '';
+
+    const response = await fetch(`${this.options.baseUrl}/documents/${documentId}/related${suffix}`);
+    if (!response.ok) {
+      const { error, code } = await parseErrorBody(response);
+      throw new DocumentApiError(error, response.status, code);
+    }
+    return (await response.json()) as RelatedDocumentsResult;
   }
 
   async retryRpa(documentId: string, expectedVersion: number): Promise<DocumentoRegistro> {

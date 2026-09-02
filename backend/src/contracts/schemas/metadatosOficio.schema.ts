@@ -83,3 +83,32 @@ export const MetadatosOficioSchema = z.object({
 /** Tipo inferido — debe permanecer estructuralmente compatible con `MetadatosOficio` de `../types`. */
 export type MetadatosOficioInput = z.input<typeof MetadatosOficioSchema>;
 export type MetadatosOficioParsed = z.output<typeof MetadatosOficioSchema>;
+
+/**
+ * Variante de solo-SALIDA de `MetadatosOficioSchema`, sin `.transform()`.
+ *
+ * `fastify-type-provider-zod` usa el mismo schema Zod tanto para validar el
+ * request como para serializar el reply. Zod v4 trata cada `.transform()` como
+ * unidireccional (no hay forma de "deshacerlo"), así que si `MetadatosOficioSchema`
+ * se reutiliza en un `response` schema, Fastify intenta `encode()` (el parse
+ * inverso) sobre datos que YA vienen normalizados desde el dominio, y Zod lanza
+ * `ZodEncodeError: Encountered unidirectional transform during encode`.
+ *
+ * Esta variante repite las mismas restricciones de forma (para no perder
+ * cobertura de tipos en el reply) pero sin los `.transform()`/`.default()` que
+ * solo tienen sentido al validar *entrada* — los valores ya están saneados
+ * (folio sin caracteres reservados, mayúsculas, etc.) para cuando llegan aquí.
+ */
+export const MetadatosOficioOutputSchema = z.object({
+  numeroOficio: z.string(),
+  fechaEmision: z.string(),
+  procedencia: ProcedenciaSchema,
+  dependenciaArea: z.string(),
+  remitenteNombre: z.string(),
+  remitenteCargo: z.string(),
+  destinatarioNombre: z.string(),
+  destinatarioCargo: z.string(),
+  asunto: z.string(),
+  plazoDias: z.number().int().nonnegative().nullable(),
+  contieneDatosSensibles: z.boolean(),
+});

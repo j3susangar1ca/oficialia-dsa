@@ -50,6 +50,53 @@ El sistema adopta un patrón de **Monolito Modular** y se administra mediante *n
 | `docs/` | Fuente de verdad conceptual. Alberga PRD, especificación de tipos, diccionario de datos y prompts del sistema. |
 | `storage/` | Watchfolder del ciclo de vida físico de los archivos (estados de entrada, procesamiento, salida y error). |
 | `rpa/` | Volcados DOM e insumos estructurales para el mapeo del Worker RPA (Playwright). |
+```
+backend/src/
+├── contracts/        Puertos secundarios + tipos de dominio (fuente de verdad, ver docs/types.md y docs/contracts.md)
+├── application/       DocumentWorkflowOrchestrator — casos de uso, sin detalles de infraestructura
+├── infrastructure/    Adaptadores concretos de cada puerto (ai, pdf, storage, persistence, rpa, semantic, sync)
+└── presentation/       Servidor Fastify, rutas HTTP, WebSocket — composition root (DI manual)
+```
+
+| Puerto (`contracts/`) | Adaptador (`infrastructure/`) | Estado |
+| --- | --- | --- |
+| `IFileStorageProvider` | `LocalFileStorageAdapter` (fs/promises) | ✅ Real |
+| `IDocumentRepository` | `SqliteDocumentRepository` (better-sqlite3, WAL) | ✅ Real |
+| `IPdfProcessorProvider` | `PythonPdfProcessorAdapter` (spawn de `scripts/pdf_worker.py`, PyMuPDF/Pillow) | ✅ Real |
+| `IAIExtractorProvider` | `GeminiAIExtractorAdapter` (`@google/genai`, Gemini 2.5 Flash) | ✅ Real |
+| `IRpaInjectionProvider` | `PlaywrightRpaInjectionAdapter` (default) / `PlaywrightRpaAdapter` (`RPA_MODE=playwright`) | ✅ Real, detrás de flag — ver más abajo |
+| `IExternalSyncProvider` | `GoogleSheetsExternalSyncAdapter` | ⚠️ Placeholder — requiere Service Account de Google |
+| `ILocalSemanticProvider` (P1) | `LocalSemanticMatcherAdapter` (`@xenova/transformers`, `Xenova/bge-m3`) | ✅ Real, cableado — ver más abajo |
+
+El adaptador de sincronización con Sheets, marcado como placeholder, cumple el contrato
+exactamente (mismos tipos, mismos códigos de error) para que el servidor arranque y el
+pipeline degrade con la sincronización marcada como fallida en vez de romperse.
+Sustituirlo por una implementación real no requiere tocar el orquestador ni las rutas.
+
+**RPA**: `presentation/server.ts` cablea `PlaywrightRpaInjectionAdapter` por defecto — un
+stub honesto que nunca lanza un navegador y reporta `checkIntranetHealth() === false`.
+`backend/src/infrastructure/rpa/PlaywrightRpaAdapter.ts` es la automatización real contra
+`op_cucs.fwx` (selectores Webix mapeados desde `docs/rpa/webix_dump_for_qwen.json`); se
+activa con `RPA_MODE=playwright` en `.env` (ver `.env.example`), tras
+`npm run rpa:install-browsers` (Chromium de Playwright) y las credenciales/CVEs
+institucionales. No ha sido validada contra la Intranet real — revisar selectores y
+campos antes de usarla en producción.
+
+**Búsqueda semántica local (Puerto 7, P1)**: `docs/prd.md` §2.2 la incluye como Fase
+Complementaria — sugiere al capturista oficios relacionados por similitud semántica
+(dependencia + remitente + asunto), complementando el match exacto por folio/hash. El
+puerto vive en `backend/src/contracts/ILocalSemanticProvider.ts` (igual que los otros
+6); su adaptador (`infrastructure/semantic/LocalSemanticMatcherAdapter.ts`, sobre
+`@xenova/transformers` y `Xenova/bge-m3` cuantizado) se cablea siempre en
+`server.ts`, reutilizando la misma conexión SQLite que `SqliteDocumentRepository`
+(`embeddings_schema.sql` se ejecuta junto a `schema.sql`). Instanciarlo es barato: el
+modelo ONNX (~cientos de MB) solo se descarga/carga de forma perezosa en la primera
+indexación o búsqueda real, nunca al arrancar el servidor. Indexación: automática y en
+segundo plano tras cada confirmación HITL (un fallo de inferencia local nunca bloquea
+RPA/Sheets). Búsqueda: `GET /documents/:id/related` — nunca lanza error si el modelo
+aún no está listo, degrada a `documentos: []` con `modeloEstado` explícito.
+
+### `frontend/src/`
 
 ## 4. Tech Stack & Standards
 
@@ -150,3 +197,6 @@ El orquestador de inferencia utiliza el siguiente contrato de datos (Zod schema 
 
 * **Licencia:** Propietaria / Uso Interno Restringido.
 * **Mantenimiento y Gobernanza:** Propiedad intelectual de la División de Servicios Administrativos (DSA) del Hospital Civil de Guadalajara. Mantenimiento y control operativo a cargo del equipo de Arquitectura de Software Institucional. Prohibida su divulgación o implementación externa.
+Ver [`docs/README.md`](./docs/README.md) — PRD, contratos de los 7 puertos, modelo de
+dominio y el system prompt de extracción, junto con la tabla de qué archivo de código
+implementa cada uno.

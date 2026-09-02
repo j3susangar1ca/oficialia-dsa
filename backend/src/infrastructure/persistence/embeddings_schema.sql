@@ -4,11 +4,9 @@
 -- Modelo: Xenova/bge-m3 (1024 dimensiones, Float32)
 -- Versión: 1.0.0
 --
--- ⚠️ FUERA DE ALCANCE de docs/prd.md v1.0.0-MVP (ver nota en
--- backend/src/infrastructure/semantic/ILocalSemanticProvider.ts). NO se ejecuta junto
--- a `schema.sql` en el arranque del servidor ni se referencia desde
--- `presentation/server.ts`. Aplicar manualmente solo si se retoma la Fase 2 de
--- búsqueda semántica.
+-- Puerto P1 (docs/prd.md §2.2 / docs/contracts.md §"Puerto 7"). Se ejecuta junto a
+-- `schema.sql` al abrir la conexión SQLite en `SqliteDocumentRepository` (mismo
+-- archivo .db, misma configuración WAL) — ver el constructor de esa clase.
 -- =====================================================================
 
 -- Hereda la configuración PRAGMA del esquema principal:

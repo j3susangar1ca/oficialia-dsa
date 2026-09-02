@@ -18,8 +18,8 @@ import type {
   DocumentStringInput,
   EmbeddingRecord,
   ModeloEstado,
-} from './ILocalSemanticProvider';
-import { BGE_M3_EMBEDDING_DIM } from './ILocalSemanticProvider';
+} from '../../contracts/ILocalSemanticProvider';
+import { BGE_M3_EMBEDDING_DIM } from '../../contracts/ILocalSemanticProvider';
 import { createHash } from 'node:crypto';
 
 // ==========================================
@@ -37,9 +37,6 @@ const UMBRAL_INFORMATIVO_OFFSET = 0.15;
 
 /** Número máximo de resultados por defecto */
 const DEFAULT_LIMITE = 10;
-
-/** Prefijo para el document string (permite identificar el formato) */
-const DOC_STRING_PREFIX = '';
 
 // ==========================================
 // UTILIDADES INTERNAS
@@ -97,7 +94,10 @@ function computeContentHash(text: string): string {
 function normalizeL2(vector: Float32Array): Float32Array {
   let norm = 0;
   for (let i = 0; i < vector.length; i++) {
-    norm += vector[i] * vector[i];
+    // `noUncheckedIndexedAccess` tipa vector[i] como `number | undefined`; el `!` es
+    // seguro aquí porque `i` está acotado por `vector.length` en todo el bucle.
+    const value = vector[i]!;
+    norm += value * value;
   }
   norm = Math.sqrt(norm);
 
@@ -106,7 +106,7 @@ function normalizeL2(vector: Float32Array): Float32Array {
   }
 
   for (let i = 0; i < vector.length; i++) {
-    vector[i] /= norm;
+    vector[i] = vector[i]! / norm;
   }
 
   return vector;
@@ -136,7 +136,7 @@ function bufferToFloat32(buffer: Buffer): Float32Array {
   const ab = new ArrayBuffer(buffer.byteLength);
   const view = new Uint8Array(ab);
   for (let i = 0; i < buffer.byteLength; i++) {
-    view[i] = buffer[i];
+    view[i] = buffer[i]!; // acotado por buffer.byteLength — ver nota en normalizeL2
   }
   return new Float32Array(ab);
 }
@@ -152,7 +152,7 @@ function dotProduct(a: Float32Array, b: Float32Array): number {
   let sum = 0;
   const len = Math.min(a.length, b.length);
   for (let i = 0; i < len; i++) {
-    sum += a[i] * b[i];
+    sum += a[i]! * b[i]!; // acotado por len — ver nota en normalizeL2
   }
   return sum;
 }
@@ -340,11 +340,12 @@ export class LocalSemanticMatcherAdapter implements ILocalSemanticProvider {
     // Copiar a un nuevo Float32Array para evitar retener referencia al tensor.
     const embedding = new Float32Array(BGE_M3_EMBEDDING_DIM);
     for (let i = 0; i < BGE_M3_EMBEDDING_DIM; i++) {
-      embedding[i] = rawData[i];
+      embedding[i] = rawData[i] ?? 0; // acotado por BGE_M3_EMBEDDING_DIM (1024)
     }
 
-    // Liberar el tensor de la GPU/CPU memory.
-    output.dispose();
+    // `Tensor` (@xenova/transformers 2.x, onnxruntime-web/wasm) no expone `dispose()` —
+    // a diferencia de onnxruntime-node, la limpieza de sus buffers queda a cargo del GC
+    // de JS; no hay nada que liberar manualmente aquí.
 
     // Normalizar L2 in-place.
     normalizeL2(embedding);
