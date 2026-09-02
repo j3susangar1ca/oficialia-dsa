@@ -11,7 +11,7 @@
 
 import { z } from 'zod';
 
-import { MetadatosOficioSchema } from '../../contracts/schemas/metadatosOficio.schema';
+import { MetadatosOficioOutputSchema, MetadatosOficioSchema } from '../../contracts/schemas/metadatosOficio.schema';
 
 // ---------------------------------------------------------------------------
 // Fragmentos reutilizables
@@ -53,9 +53,12 @@ const GoogleSheetsSyncSchema = z.object({
 });
 
 /**
- * Reply canónico de `DocumentoRegistro`. Los campos `metadatos*` reutilizan
- * `MetadatosOficioSchema` en modo salida (sin `.default()` obligatorio: ya vienen
+ * Reply canónico de `DocumentoRegistro`. Los campos `metadatos*` usan
+ * `MetadatosOficioOutputSchema` (sin `.transform()`/`.default()`: ya vienen
  * normalizados desde el dominio, por eso se envuelven en `.nullable()` directamente).
+ * No se reutiliza `MetadatosOficioSchema` aquí porque sus `.transform()` son
+ * unidireccionales — Zod v4 lanza `ZodEncodeError` si se usan en un schema de
+ * *reply* (fastify-type-provider-zod serializa vía "encode", el parse inverso).
  */
 export const DocumentoRegistroReplySchema = z.object({
   id: z.string().uuid(),
@@ -79,8 +82,8 @@ export const DocumentoRegistroReplySchema = z.object({
     'ERROR_RPA',
   ]),
   sha256Hash: z.string().length(64),
-  metadatosExtraidos: MetadatosOficioSchema.nullable(),
-  metadatosValidados: MetadatosOficioSchema.nullable(),
+  metadatosExtraidos: MetadatosOficioOutputSchema.nullable(),
+  metadatosValidados: MetadatosOficioOutputSchema.nullable(),
   preproceso: PreprocesoMetadataSchema.nullable(),
   rpa: RpaEjecucionSchema.nullable(),
   sheetsSync: GoogleSheetsSyncSchema,
