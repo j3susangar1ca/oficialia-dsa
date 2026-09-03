@@ -12,7 +12,10 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { IncomingFolderWatcher } from './IncomingFolderWatcher';
-import { PdfPreprocessFailedError, type DocumentWorkflowOrchestrator } from '../../application/DocumentWorkflowOrchestrator';
+import {
+  PdfPreprocessFailedError,
+  type DocumentWorkflowOrchestrator,
+} from '../../application/DocumentWorkflowOrchestrator';
 
 describe('IncomingFolderWatcher', () => {
   let storageRoot: string;

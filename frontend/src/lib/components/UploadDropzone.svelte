@@ -82,7 +82,6 @@
 </script>
 
 <div class="flex flex-col gap-2">
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     role="button"
     tabindex="0"
@@ -121,7 +120,11 @@
         aria-hidden="true"
       >
         <path stroke-linecap="round" stroke-linejoin="round" d="M12 16.5V4.5m0 0 4 4m-4-4-4 4" />
-        <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 15v3a2.5 2.5 0 0 0 2.5 2.5h10a2.5 2.5 0 0 0 2.5-2.5v-3" />
+        <path
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          d="M4.5 15v3a2.5 2.5 0 0 0 2.5 2.5h10a2.5 2.5 0 0 0 2.5-2.5v-3"
+        />
       </svg>
       <p class="text-sm font-medium text-slate-700">
         {compact ? 'Subir oficio (PDF)' : 'Arrastra un oficio en PDF, o haz clic para elegirlo'}
@@ -137,14 +140,18 @@
       <button
         type="button"
         onclick={() => (origen = 'WEB_DRAG_DROP')}
-        class="rounded px-2 py-1 transition {origen === 'WEB_DRAG_DROP' ? 'bg-white text-slate-800 shadow-soft' : 'text-slate-500 hover:text-slate-700'}"
+        class="rounded px-2 py-1 transition {origen === 'WEB_DRAG_DROP'
+          ? 'bg-white text-slate-800 shadow-soft'
+          : 'text-slate-500 hover:text-slate-700'}"
       >
         Manual
       </button>
       <button
         type="button"
         onclick={() => (origen = 'SCANNER_ADF')}
-        class="rounded px-2 py-1 transition {origen === 'SCANNER_ADF' ? 'bg-white text-slate-800 shadow-soft' : 'text-slate-500 hover:text-slate-700'}"
+        class="rounded px-2 py-1 transition {origen === 'SCANNER_ADF'
+          ? 'bg-white text-slate-800 shadow-soft'
+          : 'text-slate-500 hover:text-slate-700'}"
       >
         Escáner ADF
       </button>

@@ -84,7 +84,10 @@ export class DocumentApiClient {
     return (await response.json()) as DocumentoRegistro[];
   }
 
-  async uploadDocument(file: File, origen: 'SCANNER_ADF' | 'WEB_DRAG_DROP' = 'WEB_DRAG_DROP'): Promise<{ documentId: string }> {
+  async uploadDocument(
+    file: File,
+    origen: 'SCANNER_ADF' | 'WEB_DRAG_DROP' = 'WEB_DRAG_DROP'
+  ): Promise<{ documentId: string }> {
     const formData = new FormData();
     formData.append('file', file, file.name);
 

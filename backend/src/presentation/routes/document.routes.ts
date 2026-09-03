@@ -18,7 +18,10 @@
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 
-import { PdfPreprocessFailedError, type DocumentWorkflowOrchestrator } from '../../application/DocumentWorkflowOrchestrator';
+import {
+  PdfPreprocessFailedError,
+  type DocumentWorkflowOrchestrator,
+} from '../../application/DocumentWorkflowOrchestrator';
 import type { IDocumentRepository, RepositoryErrorCode } from '../../contracts/IDocumentRepository';
 import type { IFileStorageProvider } from '../../contracts/IFileStorageProvider';
 import type { DocumentoRegistro } from '../../contracts/types';
@@ -143,7 +146,10 @@ export const documentRoutes: FastifyPluginAsync<DocumentRoutesOptions> = async (
         return reply.code(404).send({ error: 'Documento no encontrado', code: 'DOCUMENT_NOT_FOUND' });
       }
       const bytes = await storage.readFile(document.rutaArchivoActual);
-      return reply.header('Content-Type', 'application/pdf').header('Cache-Control', 'private, max-age=60').send(Buffer.from(bytes));
+      return reply
+        .header('Content-Type', 'application/pdf')
+        .header('Cache-Control', 'private, max-age=60')
+        .send(Buffer.from(bytes));
     },
   });
 
@@ -166,7 +172,9 @@ export const documentRoutes: FastifyPluginAsync<DocumentRoutesOptions> = async (
     handler: async (request, reply) => {
       const filePart = await request.file();
       if (!filePart) {
-        return reply.code(400).send({ error: 'No se recibió ningún archivo (campo multipart esperado).', code: 'NO_FILE' });
+        return reply
+          .code(400)
+          .send({ error: 'No se recibió ningún archivo (campo multipart esperado).', code: 'NO_FILE' });
       }
       if (filePart.mimetype !== 'application/pdf' && !filePart.filename.toLowerCase().endsWith('.pdf')) {
         return reply.code(400).send({ error: 'Solo se aceptan oficios en formato PDF.', code: 'INVALID_MIME_TYPE' });

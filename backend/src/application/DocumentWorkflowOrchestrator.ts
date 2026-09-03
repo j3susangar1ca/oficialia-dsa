@@ -148,7 +148,12 @@ export class DocumentWorkflowOrchestrator {
     // 5. Bloquear archivo moviéndolo a storage/02_en_proceso/ (el 4º argumento persiste
     //    el nuevo rutaArchivoActual junto con la transición de estado — ver contrato).
     const inProcessPath = await this.storage.moveToInProcess(incomingPath, record.id);
-    const currentRecord = await this.repository.updateStatus(record.id, 'PENDIENTE_EXTRACCION', record.version, inProcessPath);
+    const currentRecord = await this.repository.updateStatus(
+      record.id,
+      'PENDIENTE_EXTRACCION',
+      record.version,
+      inProcessPath
+    );
     this.emit(currentRecord.id, currentRecord.estado, currentRecord);
 
     // 6-7. Render + extracción por IA: continúa en segundo plano, no bloquea la respuesta HTTP.
@@ -226,7 +231,7 @@ export class DocumentWorkflowOrchestrator {
 
     // 1. Construir la nomenclatura canónica obligatoria: YYYY-MM-DD__[FOLIO]__[REMITENTE].pdf
     const datePrefix = validatedMetadata.fechaEmision;
-    const cleanFolio = validatedMetadata.numeroOficio.replace(/[\/\\:*?"<>|]/g, '-');
+    const cleanFolio = validatedMetadata.numeroOficio.replace(/[/\\:*?"<>|]/g, '-');
     const cleanSender = validatedMetadata.remitenteNombre.substring(0, 30).trim().replace(/\s+/g, '_');
     const canonicalFileName = `${datePrefix}__${cleanFolio}__${cleanSender}.pdf`;
 
@@ -299,7 +304,12 @@ export class DocumentWorkflowOrchestrator {
     const document = await this.repository.findById(documentId);
     const metadata = document?.metadatosValidados ?? document?.metadatosExtraidos;
     if (!document || !metadata) {
-      return { documentos: [], totalVectoresComparados: 0, duracionMs: 0, modeloEstado: this.semanticProvider.modeloEstado };
+      return {
+        documentos: [],
+        totalVectoresComparados: 0,
+        duracionMs: 0,
+        modeloEstado: this.semanticProvider.modeloEstado,
+      };
     }
 
     return this.semanticProvider.searchSimilar({
@@ -341,7 +351,12 @@ export class DocumentWorkflowOrchestrator {
       };
     }
 
-    const updatedAfterRpa = await this.repository.updateRpaExecution(document.id, rpaResult, finalStatus, currentVersion);
+    const updatedAfterRpa = await this.repository.updateRpaExecution(
+      document.id,
+      rpaResult,
+      finalStatus,
+      currentVersion
+    );
     currentVersion = updatedAfterRpa.version;
     this.emit(updatedAfterRpa.id, updatedAfterRpa.estado, updatedAfterRpa);
     if (finalStatus === 'ERROR_RPA') {

@@ -192,7 +192,6 @@ export interface EmbeddingRecord {
  *   en lugar de lanzar excepciones.
  */
 export interface ILocalSemanticProvider {
-
   /**
    * Estado actual del modelo de inferencia.
    * Útil para que la UI muestre indicadores de carga.

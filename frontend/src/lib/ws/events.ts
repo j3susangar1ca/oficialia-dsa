@@ -37,11 +37,7 @@ export interface HeartbeatEvent {
 }
 
 export type DocumentServerEvent =
-  | NewDocumentPendingEvent
-  | DocumentStateChangedEvent
-  | PipelineErrorEvent
-  | RpaCompletedEvent
-  | HeartbeatEvent;
+  NewDocumentPendingEvent | DocumentStateChangedEvent | PipelineErrorEvent | RpaCompletedEvent | HeartbeatEvent;
 
 /** Type guard mínimo: valida forma antes de castear un mensaje WS crudo. */
 export function isDocumentServerEvent(value: unknown): value is DocumentServerEvent {

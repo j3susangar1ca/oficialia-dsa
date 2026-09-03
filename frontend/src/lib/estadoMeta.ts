@@ -47,7 +47,14 @@ export const BANDEJA_GRUPOS: readonly BandejaGrupo[] = [
   {
     id: 'en-proceso',
     label: 'En proceso',
-    estados: ['PENDIENTE_PREPROCESO', 'EN_PREPROCESO', 'PENDIENTE_EXTRACCION', 'EN_EXTRACCION', 'APROBADO_HITL', 'EN_RPA'],
+    estados: [
+      'PENDIENTE_PREPROCESO',
+      'EN_PREPROCESO',
+      'PENDIENTE_EXTRACCION',
+      'EN_EXTRACCION',
+      'APROBADO_HITL',
+      'EN_RPA',
+    ],
   },
   { id: 'errores', label: 'Con errores', estados: ['ERROR_PREPROCESO', 'ERROR_EXTRACCION', 'ERROR_RPA'] },
   { id: 'completados', label: 'Completados', estados: ['COMPLETADO'] },

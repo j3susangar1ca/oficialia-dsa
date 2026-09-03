@@ -57,7 +57,11 @@ export class GoogleSheetsApiError extends Error implements ExternalSyncError {
   public readonly spreadsheetId?: string;
   public readonly rowAttempted?: number;
 
-  constructor(code: ExternalSyncErrorCode, message: string, attrs: { spreadsheetId?: string; rowAttempted?: number; cause?: unknown } = {}) {
+  constructor(
+    code: ExternalSyncErrorCode,
+    message: string,
+    attrs: { spreadsheetId?: string; rowAttempted?: number; cause?: unknown } = {}
+  ) {
     super(message, { cause: attrs.cause });
     this.name = 'GoogleSheetsApiError';
     this.code = code;
@@ -100,7 +104,8 @@ function normalizeSheetRow(payload: DocumentSyncPayload): unknown[] {
 
 /** Traduce un error de la API de Google (googleapis lanza objetos con `.code`/`.status` HTTP) a ExternalSyncErrorCode. */
 function mapGoogleApiError(cause: unknown, spreadsheetId: string, rowAttempted?: number): GoogleSheetsApiError {
-  const httpStatus = (cause as { code?: number; status?: number; response?: { status?: number } })?.code ??
+  const httpStatus =
+    (cause as { code?: number; status?: number; response?: { status?: number } })?.code ??
     (cause as { response?: { status?: number } })?.response?.status;
   const message = cause instanceof Error ? cause.message : String(cause);
 
@@ -112,11 +117,15 @@ function mapGoogleApiError(cause: unknown, spreadsheetId: string, rowAttempted?:
     });
   }
   if (httpStatus === 404) {
-    return new GoogleSheetsApiError('SPREADSHEET_NOT_FOUND', `Hoja de cálculo no encontrada (${spreadsheetId}): ${message}`, {
-      spreadsheetId,
-      rowAttempted,
-      cause,
-    });
+    return new GoogleSheetsApiError(
+      'SPREADSHEET_NOT_FOUND',
+      `Hoja de cálculo no encontrada (${spreadsheetId}): ${message}`,
+      {
+        spreadsheetId,
+        rowAttempted,
+        cause,
+      }
+    );
   }
   if (httpStatus === 429) {
     return new GoogleSheetsApiError('RATE_LIMIT_QUOTA_EXCEEDED', `Cuota de Google Sheets API excedida: ${message}`, {

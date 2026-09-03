@@ -186,7 +186,12 @@ export const ListDocumentsQuerystringSchema = z.object({
    */
   estados: z
     .string()
-    .transform((val) => val.split(',').map((s) => s.trim()).filter(Boolean))
+    .transform((val) =>
+      val
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+    )
     .pipe(z.array(DocumentoRegistroReplySchema.shape.estado).min(1))
     .optional(),
   limit: z.coerce.number().int().positive().max(200).default(50),

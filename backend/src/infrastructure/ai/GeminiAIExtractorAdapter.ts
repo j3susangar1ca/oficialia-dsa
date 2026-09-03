@@ -165,9 +165,19 @@ const METADATOS_OFICIO_FALLBACK_SCHEMA: GeminiSchemaNode = {
     remitente_cargo: { type: Type.STRING, description: 'Cargo del firmante; "NO ESPECIFICADO" si no aparece.' },
     destinatario_nombre: { type: Type.STRING, description: 'Nombre del destinatario, en mayúsculas.' },
     destinatario_cargo: { type: Type.STRING, description: 'Cargo del destinatario; "NO ESPECIFICADO" si no aparece.' },
-    asunto: { type: Type.STRING, description: 'Síntesis del oficio: párrafo continuo de 1 a 3 líneas, sin saltos de línea.' },
-    plazo_dias: { type: Type.INTEGER, nullable: true, description: 'Término de respuesta en días (entero no negativo); null si no aplica.' },
-    contiene_datos_sensibles: { type: Type.BOOLEAN, description: 'true únicamente si el contenido expone datos personales sensibles (LGPDPPSO).' },
+    asunto: {
+      type: Type.STRING,
+      description: 'Síntesis del oficio: párrafo continuo de 1 a 3 líneas, sin saltos de línea.',
+    },
+    plazo_dias: {
+      type: Type.INTEGER,
+      nullable: true,
+      description: 'Término de respuesta en días (entero no negativo); null si no aplica.',
+    },
+    contiene_datos_sensibles: {
+      type: Type.BOOLEAN,
+      description: 'true únicamente si el contenido expone datos personales sensibles (LGPDPPSO).',
+    },
   },
   required: [
     'numero_oficio',
@@ -236,9 +246,7 @@ function convertNode(node: JsonSchemaLike, defs: Record<string, JsonSchemaLike>)
       geminiNode.type = Type.OBJECT;
       const properties = node.properties ?? {};
       geminiNode.properties = Object.fromEntries(
-        Object.entries(properties).map(
-          ([key, value]): [string, GeminiSchemaNode] => [key, convertNode(value, defs)]
-        )
+        Object.entries(properties).map(([key, value]): [string, GeminiSchemaNode] => [key, convertNode(value, defs)])
       );
       const propertyKeys = Object.keys(properties);
       if (propertyKeys.length > 0) {
@@ -284,10 +292,7 @@ function convertNode(node: JsonSchemaLike, defs: Record<string, JsonSchemaLike>)
  */
 function tryDeriveFromZod(schema: z.ZodType): GeminiSchemaNode | undefined {
   const zodNamespace = z as unknown as {
-    toJSONSchema?: (
-      target: z.ZodType,
-      params: { io: 'input'; unrepresentable: 'any' }
-    ) => JsonSchemaLike;
+    toJSONSchema?: (target: z.ZodType, params: { io: 'input'; unrepresentable: 'any' }) => JsonSchemaLike;
   };
   if (typeof zodNamespace.toJSONSchema !== 'function') {
     return undefined;
@@ -363,8 +368,7 @@ export class GeminiAIExtractorAdapter implements IAIExtractorProvider {
   private readonly responseSchema: GeminiSchemaNode;
 
   constructor(options: GeminiAIExtractorOptions) {
-    const apiKey: string | undefined =
-      options.apiKey ?? process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY;
+    const apiKey: string | undefined = options.apiKey ?? process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY;
     if (apiKey === undefined || apiKey.length === 0) {
       throw new Error(
         '[GeminiAIExtractorAdapter] Credencial ausente: inyecte options.apiKey o defina GEMINI_API_KEY en el entorno.'
@@ -408,9 +412,7 @@ export class GeminiAIExtractorAdapter implements IAIExtractorProvider {
     }
 
     // Orden de lectura natural del documento (carátula primero).
-    const orderedPages: ReadonlyArray<RenderedPageImage> = [...pages].sort(
-      (a, b) => a.pageNumber - b.pageNumber
-    );
+    const orderedPages: ReadonlyArray<RenderedPageImage> = [...pages].sort((a, b) => a.pageNumber - b.pageNumber);
     if (orderedPages.some((page) => page.imageBuffer.byteLength === 0)) {
       throw new GeminiExtractionError(
         'DOCUMENT_UNREADABLE_OR_EMPTY',
@@ -500,12 +502,10 @@ export class GeminiAIExtractorAdapter implements IAIExtractorProvider {
         'El JSON devuelto por el modelo viola el contrato estricto MetadatosOficio (validación Zod).',
         {
           rawResponse: rawText,
-          validationIssues: validated.error.issues.map(
-            (issue): { path: string; message: string } => ({
-              path: issue.path.map(String).join('.'),
-              message: issue.message,
-            })
-          ),
+          validationIssues: validated.error.issues.map((issue): { path: string; message: string } => ({
+            path: issue.path.map(String).join('.'),
+            message: issue.message,
+          })),
           cause: validated.error,
         }
       );
@@ -556,9 +556,7 @@ export class GeminiAIExtractorAdapter implements IAIExtractorProvider {
   private buildGenerationConfig(mode: { structured: boolean }): GenerateContentConfig {
     const config: GenerateContentConfig = {
       temperature: this.temperature,
-      ...(this.thinkingBudget !== undefined
-        ? { thinkingConfig: { thinkingBudget: this.thinkingBudget } }
-        : {}),
+      ...(this.thinkingBudget !== undefined ? { thinkingConfig: { thinkingBudget: this.thinkingBudget } } : {}),
       ...(this.maxOutputTokens !== undefined ? { maxOutputTokens: this.maxOutputTokens } : {}),
     };
     if (mode.structured) {
@@ -576,10 +574,7 @@ export class GeminiAIExtractorAdapter implements IAIExtractorProvider {
    * directiva de cierre. Los hints viajan aquí (no en el system prompt) para mantener
    * el prompt estático y cacheable, y aportar el año de contexto y la pista de ingesta.
    */
-  private buildContents(
-    pages: ReadonlyArray<RenderedPageImage>,
-    hints?: ExtractionHints
-  ): Content[] {
+  private buildContents(pages: ReadonlyArray<RenderedPageImage>, hints?: ExtractionHints): Content[] {
     const imageParts: Part[] = pages.map((page) => ({
       inlineData: {
         data: toBase64(page.imageBuffer),
@@ -610,8 +605,7 @@ export class GeminiAIExtractorAdapter implements IAIExtractorProvider {
           { text: contextLines.join('\n') },
           ...imageParts,
           {
-            text:
-              'TAREA: aplique íntegramente el protocolo institucional y devuelva únicamente el objeto JSON MetadatosOficio.',
+            text: 'TAREA: aplique íntegramente el protocolo institucional y devuelva únicamente el objeto JSON MetadatosOficio.',
           },
         ],
       },

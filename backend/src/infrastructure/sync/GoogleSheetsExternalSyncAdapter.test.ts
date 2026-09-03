@@ -6,13 +6,15 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { valuesAppendMock, valuesUpdateMock, spreadsheetsGetMock, getClientMock, googleAuthCtorMock } = vi.hoisted(() => ({
-  valuesAppendMock: vi.fn(),
-  valuesUpdateMock: vi.fn(),
-  spreadsheetsGetMock: vi.fn(),
-  getClientMock: vi.fn(),
-  googleAuthCtorMock: vi.fn(),
-}));
+const { valuesAppendMock, valuesUpdateMock, spreadsheetsGetMock, getClientMock, googleAuthCtorMock } = vi.hoisted(
+  () => ({
+    valuesAppendMock: vi.fn(),
+    valuesUpdateMock: vi.fn(),
+    spreadsheetsGetMock: vi.fn(),
+    getClientMock: vi.fn(),
+    googleAuthCtorMock: vi.fn(),
+  })
+);
 
 vi.mock('googleapis', () => ({
   google: {

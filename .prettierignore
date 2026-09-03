@@ -1,0 +1,9 @@
+node_modules/
+dist/
+build/
+.svelte-kit/
+backend/.venv/
+backend/storage/
+backend/data/
+package-lock.json
+docs/rpa/webix_dump_for_qwen.json

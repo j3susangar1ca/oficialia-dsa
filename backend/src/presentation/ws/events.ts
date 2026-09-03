@@ -44,11 +44,7 @@ export interface HeartbeatEvent {
 }
 
 export type DocumentServerEvent =
-  | NewDocumentPendingEvent
-  | DocumentStateChangedEvent
-  | PipelineErrorEvent
-  | RpaCompletedEvent
-  | HeartbeatEvent;
+  NewDocumentPendingEvent | DocumentStateChangedEvent | PipelineErrorEvent | RpaCompletedEvent | HeartbeatEvent;
 
 /** Estados que, al alcanzarse, se retransmiten también como NEW_DOCUMENT_PENDING. */
 export const HITL_READY_STATES: ReadonlySet<DocumentoEstado> = new Set<DocumentoEstado>(['PENDIENTE_REVISION']);
