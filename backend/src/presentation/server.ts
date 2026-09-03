@@ -17,6 +17,7 @@
 
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
+import rateLimit from '@fastify/rate-limit';
 import websocket from '@fastify/websocket';
 import Fastify, { type FastifyError } from 'fastify';
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -85,6 +86,15 @@ export async function buildServer() {
   });
 
   await fastify.register(websocket);
+
+  // Límite por IP sobre TODAS las rutas registradas después de este punto (/health se
+  // exime explícitamente más abajo — los monitores de infraestructura lo golpean con
+  // más frecuencia que cualquier uso humano real). Generoso por diseño: ver el
+  // comentario de rateLimitMax/rateLimitWindowMs en config/env.ts.
+  await fastify.register(rateLimit, {
+    max: env.rateLimitMax,
+    timeWindow: env.rateLimitWindowMs,
+  });
 
   // ===========================================================================
   // COMPOSITION ROOT — Inyección de Dependencias manual de los 7 puertos
@@ -184,14 +194,22 @@ export async function buildServer() {
     });
   });
 
-  fastify.get('/health', async () => ({
-    status: 'ok',
-    intranet: await rpaInjection.checkIntranetHealth(),
-    sheets: await externalSync.checkConnection(),
-    // No dispara la carga del modelo — solo refleja si ya se inicializó por una
-    // indexación/búsqueda previa (ver comentario en la instanciación de semanticProvider).
-    semantic: semanticProvider.modeloEstado,
-  }));
+  fastify.route({
+    method: 'GET',
+    url: '/health',
+    // Eximido del rate limit global: lo golpean monitores/orquestadores de
+    // infraestructura con más frecuencia de lo que cualquier capturista real llamaría a
+    // /documents — no debe competir por la misma cuota.
+    config: { rateLimit: false },
+    handler: async () => ({
+      status: 'ok',
+      intranet: await rpaInjection.checkIntranetHealth(),
+      sheets: await externalSync.checkConnection(),
+      // No dispara la carga del modelo — solo refleja si ya se inicializó por una
+      // indexación/búsqueda previa (ver comentario en la instanciación de semanticProvider).
+      semantic: semanticProvider.modeloEstado,
+    }),
+  });
 
   fastify.addHook('onClose', async () => {
     incomingFolderWatcher.stop();

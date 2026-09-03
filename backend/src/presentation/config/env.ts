@@ -48,6 +48,9 @@ export interface AppEnv {
   googleSheetsSpreadsheetId: string | undefined;
   googleSheetsSheetName: string | undefined;
   googleServiceAccountJson: string | undefined;
+  /** Máximo de requests por IP dentro de `rateLimitWindowMs` (`@fastify/rate-limit`). */
+  rateLimitMax: number;
+  rateLimitWindowMs: number;
 }
 
 function readNumber(name: string, fallback: number): number {
@@ -81,5 +84,11 @@ export function loadEnv(): AppEnv {
     googleSheetsSpreadsheetId: process.env.GOOGLE_SHEETS_SPREADSHEET_ID || undefined,
     googleSheetsSheetName: process.env.GOOGLE_SHEETS_SHEET_NAME || undefined,
     googleServiceAccountJson: process.env.GOOGLE_SERVICE_ACCOUNT_JSON || undefined,
+    // Generoso por defecto: LAN hospitalaria con pocas decenas de capturistas
+    // concurrentes (prd.md §5, "arquitectura estrictamente para LAN hospitalaria/VPN"),
+    // no un servicio público — el objetivo es frenar un bucle desbocado del cliente o un
+    // abuso trivial, no limitar el uso normal.
+    rateLimitMax: readNumber('RATE_LIMIT_MAX', 300),
+    rateLimitWindowMs: readNumber('RATE_LIMIT_WINDOW_MS', 60_000),
   };
 }
