@@ -65,13 +65,20 @@ backend/src/
 | `IPdfProcessorProvider` | `PythonPdfProcessorAdapter` (spawn de `scripts/pdf_worker.py`, PyMuPDF/Pillow) | ✅ Real |
 | `IAIExtractorProvider` | `GeminiAIExtractorAdapter` (`@google/genai`, Gemini 2.5 Flash) | ✅ Real |
 | `IRpaInjectionProvider` | `PlaywrightRpaInjectionAdapter` (default) / `PlaywrightRpaAdapter` (`RPA_MODE=playwright`) | ✅ Real, detrás de flag — ver más abajo |
-| `IExternalSyncProvider` | `GoogleSheetsExternalSyncAdapter` | ⚠️ Placeholder — requiere Service Account de Google |
+| `IExternalSyncProvider` | `GoogleSheetsExternalSyncAdapter` (`googleapis`, Sheets API v4) | ✅ Real, sin credenciales por default — ver más abajo |
 | `ILocalSemanticProvider` (P1) | `LocalSemanticMatcherAdapter` (`@xenova/transformers`, `Xenova/bge-m3`) | ✅ Real, cableado — ver más abajo |
 
-El adaptador de sincronización con Sheets, marcado como placeholder, cumple el contrato
-exactamente (mismos tipos, mismos códigos de error) para que el servidor arranque y el
-pipeline degrade con la sincronización marcada como fallida en vez de romperse.
-Sustituirlo por una implementación real no requiere tocar el orquestador ni las rutas.
+**Google Sheets**: `GoogleSheetsExternalSyncAdapter` es una implementación real (Service
+Account + Sheets API v4), pero se entrega sin credenciales configuradas — sin
+`GOOGLE_SHEETS_SPREADSHEET_ID` en `.env`, `configured` queda en `false` y cada método de
+escritura lanza `ExternalSyncNotConfiguredError` (mismo comportamiento honesto que el
+placeholder original: el orquestador ya trata eso como no bloqueante — el documento se
+completa igual, solo queda marcado como pendiente de sincronizar). Para activarlo: agrega
+`GOOGLE_SHEETS_SPREADSHEET_ID` y, o bien `GOOGLE_SERVICE_ACCOUNT_JSON` (el JSON de la
+Service Account en una línea) o `GOOGLE_APPLICATION_CREDENTIALS` apuntando al archivo —
+ver `.env.example` y el docstring de `GoogleSheetsExternalSyncAdapter.ts` para el layout
+de columnas y los permisos requeridos (Editor sobre la hoja, compartida con el
+`client_email` de la Service Account).
 
 **RPA**: `presentation/server.ts` cablea `PlaywrightRpaInjectionAdapter` por defecto — un
 stub honesto que nunca lanza un navegador y reporta `checkIntranetHealth() === false`.

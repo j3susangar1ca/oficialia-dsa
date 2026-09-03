@@ -117,7 +117,15 @@ export async function buildServer() {
     rpaInjection = new PlaywrightRpaInjectionAdapter();
   }
 
-  const externalSync = new GoogleSheetsExternalSyncAdapter();
+  // Google Sheets: sin GOOGLE_SHEETS_SPREADSHEET_ID configurado, el adaptador queda
+  // `configured === false` y degrada exactamente como el placeholder anterior — ver su
+  // docstring para las credenciales requeridas (GOOGLE_SERVICE_ACCOUNT_JSON o
+  // GOOGLE_APPLICATION_CREDENTIALS) antes de usarlo en producción.
+  const externalSync = new GoogleSheetsExternalSyncAdapter({
+    spreadsheetId: env.googleSheetsSpreadsheetId,
+    sheetName: env.googleSheetsSheetName,
+    serviceAccountJson: env.googleServiceAccountJson,
+  });
 
   // Puerto 7 (P1, docs/prd.md §2.2): búsqueda semántica local. Reutiliza la misma
   // conexión/archivo SQLite que `repository` (better-sqlite3 es síncrono, un solo hilo

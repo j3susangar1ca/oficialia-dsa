@@ -39,6 +39,15 @@ export interface AppEnv {
   watchfolderPollIntervalMs: number;
   /** Tiempo sin cambios de tamaño/mtime para considerar un archivo del watchfolder "estable" y listo para ingerir. */
   watchfolderStableForMs: number;
+  /**
+   * Config de `GoogleSheetsExternalSyncAdapter` (puerto `IExternalSyncProvider`). Sin
+   * `googleSheetsSpreadsheetId`, el adaptador queda `configured === false` y todo
+   * método de escritura lanza `ExternalSyncNotConfiguredError` (ver su docstring) —
+   * el orquestador ya trata eso como no bloqueante.
+   */
+  googleSheetsSpreadsheetId: string | undefined;
+  googleSheetsSheetName: string | undefined;
+  googleServiceAccountJson: string | undefined;
 }
 
 function readNumber(name: string, fallback: number): number {
@@ -69,5 +78,8 @@ export function loadEnv(): AppEnv {
     watchfolderEnabled: readBoolean('WATCHFOLDER_ENABLED', true),
     watchfolderPollIntervalMs: readNumber('WATCHFOLDER_POLL_INTERVAL_MS', 5_000),
     watchfolderStableForMs: readNumber('WATCHFOLDER_STABLE_FOR_MS', 4_000),
+    googleSheetsSpreadsheetId: process.env.GOOGLE_SHEETS_SPREADSHEET_ID || undefined,
+    googleSheetsSheetName: process.env.GOOGLE_SHEETS_SHEET_NAME || undefined,
+    googleServiceAccountJson: process.env.GOOGLE_SERVICE_ACCOUNT_JSON || undefined,
   };
 }
