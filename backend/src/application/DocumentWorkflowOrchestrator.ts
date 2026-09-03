@@ -37,6 +37,29 @@ export interface WorkflowEventsListener {
 }
 
 /**
+ * Puerto de logging opcional (server.ts lo cablea sobre `fastify.log`, igual que
+ * `WatcherLogger` para `IncomingFolderWatcher`).
+ *
+ * @remarks Corrección de bug: los fallos de `continueExtractionInBackground` (render de
+ * páginas o inferencia de Gemini) quedaban ERROR_EXTRACCION solo persistido en SQLite y
+ * notificado por WebSocket (`onPipelineError`) — un evento efímero que se pierde si nadie
+ * tiene el socket abierto en ese instante y que NUNCA aparecía en la consola del backend.
+ * El `.catch(err => console.error(...))` que envuelve las tres llamadas a
+ * `continueExtractionInBackground` (aquí abajo, en `retryExtraction` y en
+ * `retryPreprocess`) es código muerto: el método atrapa internamente todo error y jamás
+ * rechaza su promesa, así que ese `console.error` nunca se ejecutaba. Resultado: la causa
+ * real de un ERROR_EXTRACCION (timeout de Gemini, respuesta bloqueada por seguridad,
+ * fallo del worker Python al renderizar, etc.) era, en la práctica, irrecuperable desde
+ * los logs — exactamente el síntoma reportado ("no aparece nada en la terminal").
+ */
+export interface WorkflowLogger {
+  warn(msg: string, meta?: unknown): void;
+  error(msg: string, meta?: unknown): void;
+}
+
+const NOOP_LOGGER: WorkflowLogger = { warn: () => undefined, error: () => undefined };
+
+/**
  * Error tipado para un fallo de preprocesamiento (PyMuPDF/Pillow: PDF corrupto, con
  * contraseña, cabecera inválida, etc.). A diferencia de un `Error` genérico, transporta
  * el `documentId` del registro `ERROR_PREPROCESO` ya persistido (ver
@@ -68,7 +91,9 @@ export class DocumentWorkflowOrchestrator {
      * búsqueda semántica se saltan silenciosamente (el resto del pipeline no depende
      * de él). `server.ts` lo inyecta siempre que `ILocalSemanticProvider` esté cableado.
      */
-    private readonly semanticProvider?: ILocalSemanticProvider
+    private readonly semanticProvider?: ILocalSemanticProvider,
+    /** Ver docstring de `WorkflowLogger`. Sin cablear, degrada a no-op (comportamiento previo). */
+    private readonly logger: WorkflowLogger = NOOP_LOGGER
   ) {}
 
   /**
@@ -208,6 +233,13 @@ export class DocumentWorkflowOrchestrator {
         errorPath
       );
       this.emit(errored.id, errored.estado, errored);
+      // Único punto donde queda registrada la causa real: `onPipelineError` es un evento
+      // WebSocket efímero (se pierde si nadie estaba conectado) y no se persiste en el
+      // registro SQLite — sin este log, el motivo de un ERROR_EXTRACCION es irrecuperable.
+      this.logger.error(`[ERROR_EXTRACCION] Documento ${currentRecord.id}: ${this.describeError(error)}`, {
+        documentId: currentRecord.id,
+        error,
+      });
       this.events?.onPipelineError(
         currentRecord.id,
         'ERROR_EXTRACCION',
@@ -510,6 +542,9 @@ export class DocumentWorkflowOrchestrator {
   ): Promise<Readonly<DocumentoRegistro>> {
     const rawHash = createHash('sha256').update(rawBuffer).digest('hex');
     const reason = this.describePreprocessError(cause);
+    // El resumen `reason` sí llega al llamador (respuesta HTTP 422 / PdfPreprocessFailedError),
+    // pero la causa original (stack incluido) se pierde ahí — se deja constancia en el log.
+    this.logger.error(`[ERROR_PREPROCESO] Archivo "${fileName}": ${reason}`, { fileName, cause });
 
     // Evita acumular un registro ERROR_PREPROCESO nuevo cada vez que el mismo archivo
     // corrupto se reintenta subir sin corregirlo — se aísla la copia nueva y se
@@ -544,10 +579,21 @@ export class DocumentWorkflowOrchestrator {
 
   /** Formatea la excepción de `IPdfProcessorProvider` como texto legible para trazabilidad. */
   private describePreprocessError(cause: unknown): string {
+    return this.describeError(cause, 'Fallo desconocido en preprocesamiento de PDF');
+  }
+
+  /**
+   * Formatea cualquier causa (típicamente `PdfWorkerError` o `GeminiExtractionError`,
+   * ambos con `.code`/`.message` tipados) como `CODIGO :: mensaje` para que el `code`
+   * del contrato (p. ej. `INFERENCE_TIMEOUT`, `WORKER_SUBPROCESS_FAULT`,
+   * `SAFETY_CONTENT_BLOCKED`) quede visible de un vistazo en el log, sin tener que
+   * inspeccionar el objeto de error completo.
+   */
+  private describeError(cause: unknown, fallback = 'Fallo desconocido'): string {
     if (cause && typeof cause === 'object' && 'code' in cause && 'message' in cause) {
       return `${String((cause as { code: unknown }).code)} :: ${String((cause as { message: unknown }).message)}`;
     }
-    return cause instanceof Error ? cause.message : 'Fallo desconocido en preprocesamiento de PDF';
+    return cause instanceof Error ? cause.message : fallback;
   }
 
   private emit(documentId: string, estado: DocumentoEstado, document?: Readonly<DocumentoRegistro>): void {
