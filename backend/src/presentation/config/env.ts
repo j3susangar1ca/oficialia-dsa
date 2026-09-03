@@ -29,6 +29,16 @@ export interface AppEnv {
   rpaMode: RpaMode;
   /** Navegador Playwright visible (para depuración) cuando `rpaMode === 'playwright'`. */
   rpaHeadless: boolean;
+  /**
+   * Habilita `IncomingFolderWatcher` (vigilancia de `storage/01_entrada/` para la
+   * ingesta SCANNER_ADF, prd.md §2.1). Default `true` — se puede apagar en despliegues
+   * donde el volumen del escáner aún no está montado, o en tests.
+   */
+  watchfolderEnabled: boolean;
+  /** Intervalo de poll del watchfolder, en ms (ver docstring de IncomingFolderWatcher sobre por qué polling y no fs.watch). */
+  watchfolderPollIntervalMs: number;
+  /** Tiempo sin cambios de tamaño/mtime para considerar un archivo del watchfolder "estable" y listo para ingerir. */
+  watchfolderStableForMs: number;
 }
 
 function readNumber(name: string, fallback: number): number {
@@ -56,5 +66,8 @@ export function loadEnv(): AppEnv {
     maxUploadBytes: readNumber('MAX_UPLOAD_BYTES', 25 * 1024 * 1024), // 25 MB por oficio
     rpaMode: process.env.RPA_MODE === 'playwright' ? 'playwright' : 'stub',
     rpaHeadless: readBoolean('RPA_HEADLESS', true),
+    watchfolderEnabled: readBoolean('WATCHFOLDER_ENABLED', true),
+    watchfolderPollIntervalMs: readNumber('WATCHFOLDER_POLL_INTERVAL_MS', 5_000),
+    watchfolderStableForMs: readNumber('WATCHFOLDER_STABLE_FOR_MS', 4_000),
   };
 }

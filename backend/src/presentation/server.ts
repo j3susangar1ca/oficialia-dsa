@@ -32,6 +32,7 @@ import { PlaywrightRpaInjectionAdapter } from '../infrastructure/rpa/PlaywrightR
 import { LocalSemanticMatcherAdapter } from '../infrastructure/semantic/LocalSemanticMatcherAdapter';
 import { LocalFileStorageAdapter } from '../infrastructure/storage/LocalFileStorageAdapter';
 import { GoogleSheetsExternalSyncAdapter } from '../infrastructure/sync/GoogleSheetsExternalSyncAdapter';
+import { IncomingFolderWatcher, type WatcherLogger } from '../infrastructure/watcher/IncomingFolderWatcher';
 import { MetadatosOficioSchema } from '../contracts/schemas/metadatosOficio.schema';
 import { loadEnv } from './config/env';
 import { documentRoutes } from './routes/document.routes';
@@ -137,6 +138,26 @@ export async function buildServer() {
     semanticProvider
   );
 
+  // Ingesta SCANNER_ADF (prd.md §2.1, "Ingesta Dual"): vigila storage/01_entrada/ por
+  // polling y dispara orchestrator.ingestAndExtract automáticamente — ver docstring de
+  // IncomingFolderWatcher sobre por qué polling (no fs.watch) y cómo evita
+  // reingerir archivos depositados por la ruta HTTP de Drag & Drop.
+  const watcherLogger: WatcherLogger = {
+    info: (msg, meta) => (meta === undefined ? fastify.log.info(msg) : fastify.log.info({ meta }, msg)),
+    warn: (msg, meta) => (meta === undefined ? fastify.log.warn(msg) : fastify.log.warn({ meta }, msg)),
+    error: (msg, meta) => (meta === undefined ? fastify.log.error(msg) : fastify.log.error({ meta }, msg)),
+  };
+  const incomingFolderWatcher = new IncomingFolderWatcher({
+    storageRoot: env.storageRoot,
+    orchestrator,
+    intervalMs: env.watchfolderPollIntervalMs,
+    stableForMs: env.watchfolderStableForMs,
+    logger: watcherLogger,
+  });
+  if (env.watchfolderEnabled) {
+    incomingFolderWatcher.start();
+  }
+
   // ===========================================================================
   // RUTAS
   // ===========================================================================
@@ -165,6 +186,7 @@ export async function buildServer() {
   }));
 
   fastify.addHook('onClose', async () => {
+    incomingFolderWatcher.stop();
     eventsHub.dispose();
     repository.close();
     await rpaBrowser?.close().catch(() => undefined);
