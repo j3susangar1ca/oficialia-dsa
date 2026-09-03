@@ -18,8 +18,8 @@
     "typecheck": "npm run typecheck:backend && npm run check:frontend",
     "lint": "eslint backend/src frontend/src",
     "lint:fix": "eslint backend/src frontend/src --fix",
-    "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format": "prettier --write \"backend/src/**/*.ts\" \"frontend/src/**/*.{ts,svelte}\" \"*.{js,mjs,json}\"",
+    "format:check": "prettier --check \"backend/src/**/*.ts\" \"frontend/src/**/*.{ts,svelte}\" \"*.{js,mjs,json}\""
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
