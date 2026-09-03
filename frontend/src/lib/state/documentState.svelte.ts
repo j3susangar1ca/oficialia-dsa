@@ -50,6 +50,31 @@ const CONTEXT_KEY = Symbol('oficialia:documentHitlState');
 /** Ventana dura de debounce tras un intento de envío, en ms — ver §"Estrategia de UI Locking". */
 const SUBMIT_DEBOUNCE_MS = 1_500;
 
+/**
+ * Borrador vacío usado como último recurso en `applyRecord` cuando un documento no
+ * tiene ni `metadatosValidados` ni `metadatosExtraidos` — el único caso real es
+ * ERROR_PREPROCESO (el worker de PyMuPDF falló antes de que Gemini extrajera nada). Sin
+ * este fallback, `document.draft` se quedaba en `null` y `App.svelte` nunca montaba
+ * `HitlReviewView` (que asume `draft` no-nulo en todo el componente — ver su docstring),
+ * dejando el documento inalcanzable desde la bandeja de "Errores" pese a aparecer
+ * listado ahí. Los campos quedan vacíos y deshabilitados (`formDisabled` ya excluye
+ * cualquier estado que no sea PENDIENTE_REVISION/EN_REVISION); lo único accionable es el
+ * botón "Reintentar preprocesamiento" (`hitl.canRetryPreprocess`).
+ */
+const EMPTY_DRAFT: MetadatosOficioDraft = {
+  numeroOficio: '',
+  fechaEmision: '',
+  procedencia: 'HCG',
+  dependenciaArea: '',
+  remitenteNombre: '',
+  remitenteCargo: '',
+  destinatarioNombre: '',
+  destinatarioCargo: '',
+  asunto: '',
+  plazoDias: null,
+  contieneDatosSensibles: false,
+};
+
 export interface DocumentIssue {
   path: string;
   message: string;
@@ -129,6 +154,9 @@ export class DocumentHitlState {
 
   /** ERROR_EXTRACCION (p. ej. timeout de Gemini): reintenta render + IA, no requiere metadatos. */
   canRetryExtraction = $derived(this.document.record?.estado === 'ERROR_EXTRACCION' && !this.uiStatus.submitting);
+
+  /** ERROR_PREPROCESO (PDF corrupto/con contraseña): reintenta PyMuPDF/Pillow, no requiere metadatos. */
+  canRetryPreprocess = $derived(this.document.record?.estado === 'ERROR_PREPROCESO' && !this.uiStatus.submitting);
 
   /** Progreso visual (0–100) del pipeline, derivado del estado del WebSocket. */
   pipelineProgress = $derived.by((): number => {
@@ -330,6 +358,34 @@ export class DocumentHitlState {
     }
   }
 
+  /**
+   * Dispara `POST /:id/retry-preprocess` con la misma protección de doble-tap — única
+   * vía de recuperación para ERROR_PREPROCESO (PDF corrupto o con contraseña) sin volver
+   * a subir el archivo desde cero. Puede seguir fallando (422 PDF_PREPROCESS_FAILED) si
+   * el PDF original sigue siendo ilegible; el documento se queda en ERROR_PREPROCESO
+   * para reintentar de nuevo tras corregirlo fuera de banda.
+   */
+  async retryPreprocess(): Promise<void> {
+    const now = Date.now();
+    if (now < this.submitLockUntil || this.uiStatus.submitting) return;
+    if (!this.canRetryPreprocess || !this.document.record) return;
+
+    this.submitLockUntil = now + SUBMIT_DEBOUNCE_MS;
+    this.uiStatus.submitting = true;
+    this.uiStatus.locked = true;
+    this.uiStatus.error = null;
+
+    try {
+      const updated = await this.api.retryPreprocess(this.document.record.id, this.document.record.version);
+      this.applyRecord(updated);
+    } catch (error) {
+      this.uiStatus.error = this.describeError(error);
+      this.uiStatus.locked = false;
+    } finally {
+      this.uiStatus.submitting = false;
+    }
+  }
+
   // ==========================================================================
   // Internos
   // ==========================================================================
@@ -343,9 +399,10 @@ export class DocumentHitlState {
     // carga) o cuando el documento no está en edición activa — evita pisar lo que el
     // capturista está escribiendo si llega un evento de WebSocket a mitad de edición.
     if (!this.document.draft || record.estado === 'EN_RPA' || record.estado === 'COMPLETADO') {
-      this.document.draft = (record.metadatosValidados ?? record.metadatosExtraidos ?? this.document.draft) as
-        | MetadatosOficioDraft
-        | null;
+      this.document.draft = (record.metadatosValidados ??
+        record.metadatosExtraidos ??
+        this.document.draft ??
+        EMPTY_DRAFT) as MetadatosOficioDraft;
     }
   }
 

@@ -453,6 +453,23 @@
         </div>
       {/if}
 
+      {#if hitl.canRetryPreprocess}
+        <div class="mx-5 mt-3">
+          <button
+            type="button"
+            onclick={() => hitl.retryPreprocess()}
+            disabled={hitl.uiStatus.submitting}
+            class="w-full rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            ↻ Reintentar preprocesamiento del PDF
+          </button>
+          <p class="mt-1.5 text-center text-[11px] text-slate-400">
+            El documento no pudo procesarse (PDF corrupto o protegido con contraseña). Reintente tras corregirlo,
+            o descargue el archivo original desde el visor para revisarlo.
+          </p>
+        </div>
+      {/if}
+
       {#if hitl.canRetryRpa}
         <div class="mx-5 mt-3">
           <button

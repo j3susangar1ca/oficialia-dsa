@@ -8,6 +8,8 @@
  * y coordina el ciclo de vida completo sin conocer ningún detalle de infraestructura.
  */
 
+import { createHash } from 'node:crypto';
+
 import type {
   DocumentoRegistro,
   DocumentoEstado,
@@ -32,6 +34,24 @@ import type { ILocalSemanticProvider, ResultadoBusquedaSemantica } from '../cont
 export interface WorkflowEventsListener {
   onDocumentEvent(documentId: string, estado: DocumentoEstado, document?: Readonly<DocumentoRegistro>): void;
   onPipelineError(documentId: string, code: string, message: string): void;
+}
+
+/**
+ * Error tipado para un fallo de preprocesamiento (PyMuPDF/Pillow: PDF corrupto, con
+ * contraseña, cabecera inválida, etc.). A diferencia de un `Error` genérico, transporta
+ * el `documentId` del registro `ERROR_PREPROCESO` ya persistido (ver
+ * `recordPreprocessFailure`), para que la capa HTTP pueda devolverlo al cliente y la UI
+ * navegue directo al documento aislado en vez de perderlo tras un 500 genérico.
+ */
+export class PdfPreprocessFailedError extends Error {
+  public readonly code = 'PDF_PREPROCESS_FAILED' as const;
+  public readonly documentId: string;
+
+  constructor(documentId: string, reason: string) {
+    super(`No se pudo preprocesar el PDF: ${reason}`);
+    this.name = 'PdfPreprocessFailedError';
+    this.documentId = documentId;
+  }
 }
 
 export class DocumentWorkflowOrchestrator {
@@ -76,7 +96,23 @@ export class DocumentWorkflowOrchestrator {
     const incomingPath = await this.storage.saveIncoming(fileName, rawBuffer);
 
     // 2. Preprocesamiento e inspección de integridad (PyMuPDF / Pillow)
-    const inspection = await this.pdfProcessor.inspectAndSanitize(rawBuffer);
+    //
+    // @remarks Corrección de bug: antes esta llamada no estaba envuelta en try/catch.
+    // Un PDF corrupto o protegido con contraseña (justo los casos que
+    // `PdfProcessingErrorCode` contempla) lanzaba una excepción que se propagaba sin
+    // crear ningún registro en SQLite ni mover el archivo a `storage/04_errores/` — el
+    // archivo quedaba huérfano en `01_entrada/` para siempre y el estado
+    // `ERROR_PREPROCESO` (definido en el schema y en `types.ts`) era inalcanzable en la
+    // práctica. Ahora se captura, se persiste el registro en `ERROR_PREPROCESO` con el
+    // motivo, se aísla el archivo, y se lanza `PdfPreprocessFailedError` (tipado, con el
+    // `documentId` ya persistido) para que la capa HTTP responda 422 en vez de 500.
+    let inspection;
+    try {
+      inspection = await this.pdfProcessor.inspectAndSanitize(rawBuffer);
+    } catch (error) {
+      const failedRecord = await this.recordPreprocessFailure(fileName, origen, rawBuffer, incomingPath, error);
+      throw new PdfPreprocessFailedError(failedRecord.id, this.describePreprocessError(error));
+    }
     const { sha256Hash } = inspection.metadata;
 
     // 3. Verificación de duplicidad por Hash SHA-256
@@ -392,6 +428,111 @@ export class DocumentWorkflowOrchestrator {
     });
 
     return currentRecord;
+  }
+
+  /**
+   * Flujo de Reintento: reejecuta el preprocesamiento (PyMuPDF/Pillow) para documentos en
+   * ERROR_PREPROCESO. El archivo crudo original quedó aislado en `storage/04_errores/`
+   * por `recordPreprocessFailure` — se lee de ahí (nunca hay que volver a pedirle al
+   * capturista que suba el PDF). Si el nuevo intento tiene éxito (p. ej. el fallo fue
+   * transitorio, o alguien reemplazó el archivo fuera de banda por una versión sana con
+   * el mismo nombre) continúa el flujo normal: render + extracción IA en segundo plano.
+   */
+  async retryPreprocess(documentId: string, expectedVersion: number): Promise<Readonly<DocumentoRegistro>> {
+    const document = await this.repository.findById(documentId);
+    if (!document) throw new Error(`Documento no encontrado: ${documentId}`);
+    if (document.estado !== 'ERROR_PREPROCESO') {
+      throw new Error(`El documento no está en estado ERROR_PREPROCESO (Estado actual: ${document.estado})`);
+    }
+
+    const rawBuffer = await this.storage.readFile(document.rutaArchivoActual);
+
+    let inspection;
+    try {
+      inspection = await this.pdfProcessor.inspectAndSanitize(rawBuffer);
+    } catch (error) {
+      // Sigue sin poder procesarse: el archivo permanece donde estaba (04_errores/), solo
+      // se informa el motivo actualizado — no se crea un segundo registro duplicado.
+      throw new PdfPreprocessFailedError(documentId, this.describePreprocessError(error));
+    }
+
+    // Vuelve a colocar el archivo en 02_en_proceso/ (venía de 04_errores/ tras el fallo previo).
+    const inProcessPath = await this.storage.moveToInProcess(document.rutaArchivoActual, documentId);
+    let currentRecord = await this.repository.updateStatus(
+      documentId,
+      'PENDIENTE_EXTRACCION',
+      expectedVersion,
+      inProcessPath
+    );
+    currentRecord = await this.repository.updatePreprocessMetadata(
+      documentId,
+      inspection.metadata,
+      'PENDIENTE_EXTRACCION',
+      currentRecord.version
+    );
+    this.emit(currentRecord.id, currentRecord.estado, currentRecord);
+
+    this.continueExtractionInBackground(currentRecord, inspection.sanitizedBuffer, inProcessPath).catch((err) => {
+      console.error(`[BackgroundRetryError] Fallo en reintento de preprocesamiento del documento ${documentId}:`, err);
+    });
+
+    return currentRecord;
+  }
+
+  /**
+   * Persiste un registro `ERROR_PREPROCESO` para un archivo que falló la inspección
+   * inicial (PDF corrupto, protegido con contraseña, cabecera inválida, etc.) y lo aísla
+   * en `storage/04_errores/`. El hash SHA-256 se calcula sobre el buffer crudo (no hay
+   * `PreprocesoMetadata.sha256Hash` disponible: el worker de PyMuPDF falló antes de
+   * calcularlo) — sirve igual para deduplicar reintentos del mismo archivo corrupto.
+   */
+  private async recordPreprocessFailure(
+    fileName: string,
+    origen: IngestaOrigen,
+    rawBuffer: Uint8Array,
+    incomingPath: string,
+    cause: unknown
+  ): Promise<Readonly<DocumentoRegistro>> {
+    const rawHash = createHash('sha256').update(rawBuffer).digest('hex');
+    const reason = this.describePreprocessError(cause);
+
+    // Evita acumular un registro ERROR_PREPROCESO nuevo cada vez que el mismo archivo
+    // corrupto se reintenta subir sin corregirlo — se aísla la copia nueva y se
+    // devuelve el registro ya existente para que la UI navegue al mismo documento.
+    const existing = await this.repository.findByHash(rawHash);
+    if (existing) {
+      await this.storage.moveToError(incomingPath, `INTENTO_DUPLICADO :: ${reason}`);
+      return existing;
+    }
+
+    const errorPath = await this.storage.moveToError(incomingPath, reason);
+
+    const record = await this.repository.create({
+      nombreArchivoOriginal: fileName,
+      nombreArchivoCanonico: null,
+      rutaArchivoActual: errorPath,
+      rutaEspejoJson: null,
+      origen,
+      estado: 'ERROR_PREPROCESO',
+      sha256Hash: rawHash,
+      metadatosExtraidos: null,
+      metadatosValidados: null,
+      preproceso: null,
+      rpa: null,
+      sheetsSync: { sincronizado: false, filaIndex: null, timestampSincronizacion: null, errorSincronizacion: null },
+      revisorUsuarioId: null,
+    });
+    this.emit(record.id, record.estado, record);
+    this.events?.onPipelineError(record.id, 'ERROR_PREPROCESO', reason);
+    return record;
+  }
+
+  /** Formatea la excepción de `IPdfProcessorProvider` como texto legible para trazabilidad. */
+  private describePreprocessError(cause: unknown): string {
+    if (cause && typeof cause === 'object' && 'code' in cause && 'message' in cause) {
+      return `${String((cause as { code: unknown }).code)} :: ${String((cause as { message: unknown }).message)}`;
+    }
+    return cause instanceof Error ? cause.message : 'Fallo desconocido en preprocesamiento de PDF';
   }
 
   private emit(documentId: string, estado: DocumentoEstado, document?: Readonly<DocumentoRegistro>): void {

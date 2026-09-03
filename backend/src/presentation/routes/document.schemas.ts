@@ -116,6 +116,27 @@ export const UploadAcceptedReplySchema = z.object({
   message: z.string(),
 });
 
+/**
+ * Reply de error específica para fallos de preprocesamiento (PDF corrupto/con
+ * contraseña): a diferencia de `ErrorReplySchema` genérica, siempre incluye el
+ * `documentId` del registro `ERROR_PREPROCESO` ya persistido en `details`, para que el
+ * frontend pueda navegar directo a ese documento en la bandeja de "Errores" en vez de
+ * perderlo tras un mensaje de error suelto.
+ */
+export const PreprocessFailedReplySchema = z.object({
+  error: z.string(),
+  code: z.literal('PDF_PREPROCESS_FAILED'),
+  details: z.object({ documentId: z.string().uuid() }),
+});
+
+// ---------------------------------------------------------------------------
+// POST /documents/:id/retry-preprocess
+// ---------------------------------------------------------------------------
+
+export const RetryPreprocessBodySchema = z.object({
+  expectedVersion: z.number().int().positive(),
+});
+
 // ---------------------------------------------------------------------------
 // POST /documents/:id/confirm
 // ---------------------------------------------------------------------------

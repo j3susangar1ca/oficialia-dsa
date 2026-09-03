@@ -7,7 +7,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 
-import { DocumentWorkflowOrchestrator } from './DocumentWorkflowOrchestrator';
+import { DocumentWorkflowOrchestrator, PdfPreprocessFailedError } from './DocumentWorkflowOrchestrator';
 
 import type {
   DocumentoRegistro,
@@ -918,5 +918,130 @@ describe('DocumentWorkflowOrchestrator', () => {
       modeloEstado: 'NO_INICIALIZADO'
     });
     expect(repository.findById).not.toHaveBeenCalled();
+  });
+
+  // ------------------------------------------------------------------
+  // Regresión: ERROR_PREPROCESO era inalcanzable — inspectAndSanitize()
+  // rechazando (PDF corrupto/con contraseña) no estaba envuelto en try/catch, así
+  // que no se creaba ningún registro ni se aislaba el archivo. Ver
+  // DocumentWorkflowOrchestrator.recordPreprocessFailure / retryPreprocess.
+  // ------------------------------------------------------------------
+
+  describe('ERROR_PREPROCESO (regresión: antes inalcanzable)', () => {
+    it('debe crear un registro ERROR_PREPROCESO, aislar el archivo en 04_errores y lanzar PdfPreprocessFailedError con el documentId', async () => {
+      const preprocessError = Object.assign(new Error('Estructura de PDF corrupta'), {
+        code: 'CORRUPTED_PDF_STRUCTURE'
+      });
+      pdfProcessor.inspectAndSanitize.mockRejectedValueOnce(preprocessError);
+
+      let caught: unknown;
+      try {
+        await orchestrator.ingestAndExtract('CORRUPTO.pdf', 'WEB_DRAG_DROP', pdfBuffer);
+      } catch (error) {
+        caught = error;
+      }
+
+      expect(caught).toBeInstanceOf(PdfPreprocessFailedError);
+      expect((caught as PdfPreprocessFailedError).documentId).toBe('doc-1');
+      expect((caught as PdfPreprocessFailedError).code).toBe('PDF_PREPROCESS_FAILED');
+
+      // El archivo se aísla (no queda huérfano en 01_entrada/) y el registro persiste
+      // con estado ERROR_PREPROCESO — antes del fix, ninguna de las dos cosas ocurría.
+      expect(storage.moveToError).toHaveBeenCalledWith(
+        'storage/01_entrada/file.pdf',
+        expect.stringContaining('CORRUPTED_PDF_STRUCTURE')
+      );
+      expect(repository.create).toHaveBeenCalledWith(
+        expect.objectContaining({ estado: 'ERROR_PREPROCESO', preproceso: null })
+      );
+
+      // No debe haber continuado hacia extracción de IA.
+      expect(aiExtractor.extractFromPages).not.toHaveBeenCalled();
+    });
+
+    it('no debe crear un segundo registro si el mismo archivo corrupto (mismo hash) se reintenta subir', async () => {
+      const preprocessError = Object.assign(new Error('PDF protegido con contraseña'), {
+        code: 'PASSWORD_PROTECTED_FILE'
+      });
+      pdfProcessor.inspectAndSanitize.mockRejectedValue(preprocessError);
+
+      const existingFailed = buildDocument({ id: 'doc-error-existente', estado: 'ERROR_PREPROCESO' });
+      repository.findByHash.mockResolvedValue(existingFailed);
+
+      const caught: PdfPreprocessFailedError = await orchestrator
+        .ingestAndExtract('CORRUPTO_OTRA_VEZ.pdf', 'WEB_DRAG_DROP', pdfBuffer)
+        .catch((error) => error);
+
+      expect(caught).toBeInstanceOf(PdfPreprocessFailedError);
+      expect(caught.documentId).toBe('doc-error-existente');
+      expect(repository.create).not.toHaveBeenCalled();
+      expect(storage.moveToError).toHaveBeenCalledWith(
+        'storage/01_entrada/file.pdf',
+        expect.stringContaining('INTENTO_DUPLICADO')
+      );
+    });
+
+    it('retryPreprocess debe reprocesar exitosamente y continuar a extracción de IA hasta PENDIENTE_REVISION', async () => {
+      const failedDoc = buildDocument({
+        id: 'doc-1',
+        estado: 'ERROR_PREPROCESO',
+        version: 2,
+        rutaArchivoActual: 'storage/04_errores/doc-1.pdf',
+        preproceso: null
+      });
+      repository.findById.mockResolvedValue(failedDoc);
+      storage.readFile.mockResolvedValue(pdfBuffer);
+
+      const result = await orchestrator.retryPreprocess('doc-1', 2);
+
+      expect(storage.readFile).toHaveBeenCalledWith('storage/04_errores/doc-1.pdf');
+      expect(pdfProcessor.inspectAndSanitize).toHaveBeenCalledWith(pdfBuffer);
+      expect(storage.moveToInProcess).toHaveBeenCalledWith('storage/04_errores/doc-1.pdf', 'doc-1');
+      expect(repository.updatePreprocessMetadata).toHaveBeenCalledWith(
+        'doc-1',
+        preproceso,
+        'PENDIENTE_EXTRACCION',
+        expect.any(Number)
+      );
+      expect(result.estado).toBe('PENDIENTE_EXTRACCION');
+
+      await vi.waitFor(() => expect(repository.updateExtractedMetadata).toHaveBeenCalledTimes(1));
+      expect(repository.updateExtractedMetadata).toHaveBeenCalledWith(
+        'doc-1',
+        validMetadata,
+        'PENDIENTE_REVISION',
+        expect.any(Number)
+      );
+    });
+
+    it('retryPreprocess debe rechazar si el documento no está en estado ERROR_PREPROCESO', async () => {
+      repository.findById.mockResolvedValue(buildDocument({ id: 'doc-1', estado: 'PENDIENTE_REVISION', version: 3 }));
+
+      await expect(orchestrator.retryPreprocess('doc-1', 3)).rejects.toThrow(/no está en estado ERROR_PREPROCESO/i);
+      expect(storage.readFile).not.toHaveBeenCalled();
+    });
+
+    it('retryPreprocess debe lanzar PdfPreprocessFailedError si el archivo sigue corrupto, sin duplicar el registro', async () => {
+      const failedDoc = buildDocument({
+        id: 'doc-1',
+        estado: 'ERROR_PREPROCESO',
+        version: 2,
+        rutaArchivoActual: 'storage/04_errores/doc-1.pdf'
+      });
+      repository.findById.mockResolvedValue(failedDoc);
+      storage.readFile.mockResolvedValue(pdfBuffer);
+      pdfProcessor.inspectAndSanitize.mockRejectedValueOnce(
+        Object.assign(new Error('Sigue corrupto'), { code: 'CORRUPTED_PDF_STRUCTURE' })
+      );
+
+      const caught: PdfPreprocessFailedError = await orchestrator
+        .retryPreprocess('doc-1', 2)
+        .catch((error) => error);
+
+      expect(caught).toBeInstanceOf(PdfPreprocessFailedError);
+      expect(caught.documentId).toBe('doc-1');
+      expect(repository.create).not.toHaveBeenCalled();
+      expect(storage.moveToInProcess).not.toHaveBeenCalled();
+    });
   });
 });
