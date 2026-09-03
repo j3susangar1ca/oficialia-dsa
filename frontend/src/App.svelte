@@ -103,7 +103,9 @@
   <!-- ============================================================ -->
   <header class="flex h-14 shrink-0 items-center justify-between border-b border-slate-200 bg-white px-4">
     <div class="flex items-center gap-2.5">
-      <span class="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-brand-600 text-sm font-bold text-white">
+      <span
+        class="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-brand-600 text-sm font-bold text-white"
+      >
         DSA
       </span>
       <div class="leading-tight">
@@ -151,7 +153,11 @@
         <h2 class="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
           {docs.length} documento{docs.length === 1 ? '' : 's'}
         </h2>
-        <button type="button" class="text-[11px] font-medium text-brand-600 hover:text-brand-700" onclick={() => void refreshBandeja()}>
+        <button
+          type="button"
+          class="text-[11px] font-medium text-brand-600 hover:text-brand-700"
+          onclick={() => void refreshBandeja()}
+        >
           Actualizar
         </button>
       </div>
@@ -159,7 +165,7 @@
       <div class="flex-1 overflow-y-auto">
         {#if loadingList}
           <div class="flex flex-col gap-2 p-3">
-            {#each Array(4) as _}
+            {#each Array(4) as _, i (i)}
               <div class="h-14 animate-pulse rounded-lg bg-slate-100"></div>
             {/each}
           </div>
@@ -177,7 +183,8 @@
                 <button
                   type="button"
                   onclick={() => selectDocument(doc.id)}
-                  class="flex w-full flex-col gap-1 rounded-lg px-2.5 py-2 text-left transition {hitl.document.id === doc.id
+                  class="flex w-full flex-col gap-1 rounded-lg px-2.5 py-2 text-left transition {hitl.document.id ===
+                  doc.id
                     ? 'bg-brand-50 ring-1 ring-inset ring-brand-200'
                     : 'hover:bg-slate-50'}"
                 >
@@ -220,7 +227,11 @@
           <div class="flex w-full max-w-md flex-col items-center gap-4 text-center">
             <span class="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-brand-50 text-brand-500">
               <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m-8 5h10a2 2 0 0 0 2-2V7.828a2 2 0 0 0-.586-1.414l-3.828-3.828A2 2 0 0 0 13.172 2H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2Z" />
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  d="M9 12h6m-6 4h6m-8 5h10a2 2 0 0 0 2-2V7.828a2 2 0 0 0-.586-1.414l-3.828-3.828A2 2 0 0 0 13.172 2H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2Z"
+                />
               </svg>
             </span>
             <div>

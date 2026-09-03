@@ -70,10 +70,7 @@ export interface IExternalSyncProvider {
    * @returns Estado de sincronización actualizado.
    * @throws {ExternalSyncError} Si el índice de fila está fuera de rango o el servicio no responde.
    */
-  updateRowRpaStatus(
-    rowIndex: number,
-    rpaData: Readonly<RpaEjecucion>
-  ): Promise<Readonly<GoogleSheetsSync>>;
+  updateRowRpaStatus(rowIndex: number, rpaData: Readonly<RpaEjecucion>): Promise<Readonly<GoogleSheetsSync>>;
 
   /**
    * Realiza una sincronización por lote de múltiples documentos pendientes.
@@ -82,9 +79,7 @@ export interface IExternalSyncProvider {
    * @returns Colección de resultados con índices de fila correspondientes.
    * @performance Optimiza cuota de red agrupando inserciones en una sola solicitud batch.
    */
-  appendBatchRows(
-    payloads: ReadonlyArray<DocumentSyncPayload>
-  ): Promise<ReadonlyArray<GoogleSheetsSync>>;
+  appendBatchRows(payloads: ReadonlyArray<DocumentSyncPayload>): Promise<ReadonlyArray<GoogleSheetsSync>>;
 
   /**
    * Verifica la validez de las credenciales de servicio y el acceso a la hoja designada.

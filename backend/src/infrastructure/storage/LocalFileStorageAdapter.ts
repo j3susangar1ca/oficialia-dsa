@@ -95,10 +95,14 @@ export class LocalFileStorageAdapter implements IFileStorageProvider {
     try {
       await fs.writeFile(this.resolve(relativeJsonPath), JSON.stringify(metadata, null, 2), 'utf-8');
     } catch (cause) {
-      throw new LocalStorageError('MIRROR_JSON_WRITE_FAILED', `No se pudo escribir el JSON espejo: ${relativeJsonPath}`, {
-        targetPath: relativeJsonPath,
-        cause,
-      });
+      throw new LocalStorageError(
+        'MIRROR_JSON_WRITE_FAILED',
+        `No se pudo escribir el JSON espejo: ${relativeJsonPath}`,
+        {
+          targetPath: relativeJsonPath,
+          cause,
+        }
+      );
     }
 
     const finalBytes = await fs.readFile(this.resolve(relativePdfPath));

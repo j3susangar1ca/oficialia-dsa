@@ -48,7 +48,11 @@ export class PdfWorkerError extends Error implements PdfProcessingError {
   public readonly code: PdfProcessingErrorCode;
   public readonly underlyingExitCode?: number;
 
-  constructor(code: PdfProcessingErrorCode, message: string, attributes: { underlyingExitCode?: number; cause?: unknown } = {}) {
+  constructor(
+    code: PdfProcessingErrorCode,
+    message: string,
+    attributes: { underlyingExitCode?: number; cause?: unknown } = {}
+  ) {
     super(message, { cause: attributes.cause });
     this.name = 'PdfWorkerError';
     this.code = code;
@@ -143,16 +147,14 @@ export class PythonPdfProcessorAdapter implements IPdfProcessorProvider {
     const result = await this.runJsonAction<{ pages: RenderWorkerPage[] }>('render', args, sanitizedBuffer);
 
     return result.pages
-      .map(
-        (page): RenderedPageImage => ({
-          pageNumber: page.pageNumber,
-          imageBuffer: Buffer.from(page.base64, 'base64'),
-          mimeType: page.format === 'jpeg' ? 'image/jpeg' : 'image/png',
-          widthPx: page.width,
-          heightPx: page.height,
-          dpi,
-        })
-      )
+      .map((page): RenderedPageImage => ({
+        pageNumber: page.pageNumber,
+        imageBuffer: Buffer.from(page.base64, 'base64'),
+        mimeType: page.format === 'jpeg' ? 'image/jpeg' : 'image/png',
+        widthPx: page.width,
+        heightPx: page.height,
+        dpi,
+      }))
       .sort((a, b) => a.pageNumber - b.pageNumber);
   }
 
@@ -172,7 +174,9 @@ export class PythonPdfProcessorAdapter implements IPdfProcessorProvider {
       const jsonStart = raw.indexOf('{');
       parsed = JSON.parse(jsonStart >= 0 ? raw.slice(jsonStart) : raw);
     } catch (cause) {
-      throw new PdfWorkerError('WORKER_SUBPROCESS_FAULT', `Salida no-JSON del worker Python (acción=${action}).`, { cause });
+      throw new PdfWorkerError('WORKER_SUBPROCESS_FAULT', `Salida no-JSON del worker Python (acción=${action}).`, {
+        cause,
+      });
     }
     if (!parsed.success || parsed.result === undefined) {
       throw new PdfWorkerError(
@@ -188,11 +192,7 @@ export class PythonPdfProcessorAdapter implements IPdfProcessorProvider {
     return stdout;
   }
 
-  private spawnWorker(
-    args: string[],
-    stdin: Uint8Array,
-    expectBinaryStdout: boolean
-  ): Promise<{ stdout: Buffer }> {
+  private spawnWorker(args: string[], stdin: Uint8Array, expectBinaryStdout: boolean): Promise<{ stdout: Buffer }> {
     return new Promise((resolve, reject) => {
       const child = spawn(this.pythonBin, [this.scriptPath, ...args], {
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -250,9 +250,13 @@ export class PythonPdfProcessorAdapter implements IPdfProcessorProvider {
         }
 
         reject(
-          new PdfWorkerError('WORKER_SUBPROCESS_FAULT', `El subproceso Python terminó con código ${exitCode}: ${stderrChunks.join('')}`, {
-            underlyingExitCode: exitCode ?? undefined,
-          })
+          new PdfWorkerError(
+            'WORKER_SUBPROCESS_FAULT',
+            `El subproceso Python terminó con código ${exitCode}: ${stderrChunks.join('')}`,
+            {
+              underlyingExitCode: exitCode ?? undefined,
+            }
+          )
         );
       });
 

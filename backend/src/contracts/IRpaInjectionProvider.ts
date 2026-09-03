@@ -70,10 +70,7 @@ export interface IRpaInjectionProvider {
    * @performance Proceso asíncrono intensivo en I/O de red y memoria (gestión de navegador headless).
    * @sideEffect Crea un nuevo registro en la base de datos de la Intranet y guarda la captura del acuse.
    */
-  injectDocument(
-    payload: RpaInjectionPayload,
-    options?: RpaExecutionOptions
-  ): Promise<Readonly<RpaEjecucion>>;
+  injectDocument(payload: RpaInjectionPayload, options?: RpaExecutionOptions): Promise<Readonly<RpaEjecucion>>;
 
   /**
    * Ejecuta un reintento manual de inyección para documentos en estado de error previo.

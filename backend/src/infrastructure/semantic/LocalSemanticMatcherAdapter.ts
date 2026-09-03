@@ -57,8 +57,8 @@ const DEFAULT_LIMITE = 10;
 function buildDocumentString(input: DocumentStringInput): string {
   const sanitize = (s: string): string =>
     s
-      .replace(/[\r\n]+/g, ' ')   // Eliminar saltos de línea
-      .replace(/\s+/g, ' ')       // Colapsar espacios múltiples
+      .replace(/[\r\n]+/g, ' ') // Eliminar saltos de línea
+      .replace(/\s+/g, ' ') // Colapsar espacios múltiples
       .trim()
       .toUpperCase();
 
@@ -118,11 +118,7 @@ function normalizeL2(vector: Float32Array): Float32Array {
  * para evitar copias innecesarias.
  */
 function float32ToBuffer(vector: Float32Array): Buffer {
-  return Buffer.from(
-    vector.buffer,
-    vector.byteOffset,
-    vector.byteLength
-  );
+  return Buffer.from(vector.buffer, vector.byteOffset, vector.byteLength);
 }
 
 /**
@@ -173,7 +169,6 @@ function dotProduct(a: Float32Array, b: Float32Array): number {
  * comparten la misma promesa de carga del modelo).
  */
 export class LocalSemanticMatcherAdapter implements ILocalSemanticProvider {
-
   // --- Estado interno del modelo ---
   private _modeloEstado: ModeloEstado = 'NO_INICIALIZADO';
   private _pipeline: FeatureExtractionPipeline | null = null;
@@ -287,18 +282,12 @@ export class LocalSemanticMatcherAdapter implements ILocalSemanticProvider {
 
   private async _doInitialize(): Promise<void> {
     try {
-      this._pipeline = await pipeline(
-        'feature-extraction',
-        MODEL_NAME,
-        { quantized: true }
-      );
+      this._pipeline = await pipeline('feature-extraction', MODEL_NAME, { quantized: true });
       this._modeloEstado = 'LISTO';
     } catch (error) {
       this._modeloEstado = 'ERROR_INFERENCIA';
       this._pipeline = null;
-      throw new Error(
-        `[LocalSemanticMatcher] Fallo al cargar modelo ${MODEL_NAME}: ${error}`
-      );
+      throw new Error(`[LocalSemanticMatcher] Fallo al cargar modelo ${MODEL_NAME}: ${error}`, { cause: error });
     }
   }
 
@@ -319,7 +308,7 @@ export class LocalSemanticMatcherAdapter implements ILocalSemanticProvider {
     if (this._modeloEstado !== 'LISTO' || this._pipeline === null) {
       throw new Error(
         `[LocalSemanticMatcher] Modelo no está listo. Estado actual: ${this._modeloEstado}. ` +
-        `Llame a initialize() primero.`
+          `Llame a initialize() primero.`
       );
     }
 
@@ -329,8 +318,8 @@ export class LocalSemanticMatcherAdapter implements ILocalSemanticProvider {
     // bge-m3 retorna un tensor con shape [1, sequence_length, 1024].
     // Para búsqueda semántica, usamos el embedding del token [CLS] (índice 0).
     const output = await this._pipeline(documentString, {
-      pooling: 'cls',       // Extraer embedding [CLS]
-      normalize: false,     // Normalizamos manualmente para control explícito
+      pooling: 'cls', // Extraer embedding [CLS]
+      normalize: false, // Normalizamos manualmente para control explícito
     });
 
     // Extraer datos del tensor como Float32Array.
@@ -365,18 +354,12 @@ export class LocalSemanticMatcherAdapter implements ILocalSemanticProvider {
    * 2. Verificar si ya existe un embedding con el mismo content_hash (idempotencia).
    * 3. Si no existe o el hash cambió, generar embedding y persistir.
    */
-  async indexDocument(
-    documentoId: string,
-    input: DocumentStringInput
-  ): Promise<EmbeddingRecord> {
+  async indexDocument(documentoId: string, input: DocumentStringInput): Promise<EmbeddingRecord> {
     const documentString = buildDocumentString(input);
     const contentHash = computeContentHash(documentString);
 
     // Verificar si ya existe un embedding idéntico.
-    const existing = this.stmtSelectByContentHash.get(
-      documentoId,
-      contentHash
-    ) as { id: number } | undefined;
+    const existing = this.stmtSelectByContentHash.get(documentoId, contentHash) as { id: number } | undefined;
 
     if (existing) {
       // Ya existe un embedding con el mismo contenido. Retornar el existente.
@@ -393,22 +376,10 @@ export class LocalSemanticMatcherAdapter implements ILocalSemanticProvider {
 
     if (prevRecord) {
       // Actualizar embedding existente.
-      this.stmtUpdate.run(
-        vectorBuffer,
-        BGE_M3_EMBEDDING_DIM,
-        documentString,
-        contentHash,
-        documentoId
-      );
+      this.stmtUpdate.run(vectorBuffer, BGE_M3_EMBEDDING_DIM, documentString, contentHash, documentoId);
     } else {
       // Insertar nuevo embedding.
-      this.stmtInsert.run(
-        documentoId,
-        vectorBuffer,
-        BGE_M3_EMBEDDING_DIM,
-        documentString,
-        contentHash
-      );
+      this.stmtInsert.run(documentoId, vectorBuffer, BGE_M3_EMBEDDING_DIM, documentString, contentHash);
     }
 
     const record = this.stmtSelectByDocId.get(documentoId) as any;
@@ -440,10 +411,7 @@ export class LocalSemanticMatcherAdapter implements ILocalSemanticProvider {
         exitosos++;
       } catch (error) {
         // Registrar pero no abortar el lote.
-        console.error(
-          `[LocalSemanticMatcher] Error indexando documento ${documentoId}:`,
-          error
-        );
+        console.error(`[LocalSemanticMatcher] Error indexando documento ${documentoId}:`, error);
       }
     };
 
@@ -476,9 +444,7 @@ export class LocalSemanticMatcherAdapter implements ILocalSemanticProvider {
    * Si el modelo no está listo, retorna resultado con array vacío
    * (no lanza excepción para no bloquear el flujo de la aplicación).
    */
-  async searchSimilar(
-    params: BusquedaSemanticaParams
-  ): Promise<ResultadoBusquedaSemantica> {
+  async searchSimilar(params: BusquedaSemanticaParams): Promise<ResultadoBusquedaSemantica> {
     const startTime = Date.now();
 
     const {
@@ -529,7 +495,7 @@ export class LocalSemanticMatcherAdapter implements ILocalSemanticProvider {
       if (row.dimension !== BGE_M3_EMBEDDING_DIM) {
         console.warn(
           `[LocalSemanticMatcher] Vector con dimensión inesperada ` +
-          `${row.dimension} para documento ${row.documento_id}. Se omite.`
+            `${row.dimension} para documento ${row.documento_id}. Se omite.`
         );
         continue;
       }

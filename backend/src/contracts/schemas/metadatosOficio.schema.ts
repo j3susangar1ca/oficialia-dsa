@@ -21,7 +21,7 @@
 import { z } from 'zod';
 
 /** Caracteres reservados de un sistema de archivos, no permitidos en el folio. */
-const FOLIO_RESERVED_CHARS_RE = /[\/\\:*?"<>|]/g;
+const FOLIO_RESERVED_CHARS_RE = /[/\\:*?"<>|]/g;
 
 export const ProcedenciaSchema = z.enum(['HCG', 'Ajena']);
 

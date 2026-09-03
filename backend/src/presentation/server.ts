@@ -17,6 +17,7 @@
 
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
+import rateLimit from '@fastify/rate-limit';
 import websocket from '@fastify/websocket';
 import Fastify, { type FastifyError } from 'fastify';
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -32,6 +33,7 @@ import { PlaywrightRpaInjectionAdapter } from '../infrastructure/rpa/PlaywrightR
 import { LocalSemanticMatcherAdapter } from '../infrastructure/semantic/LocalSemanticMatcherAdapter';
 import { LocalFileStorageAdapter } from '../infrastructure/storage/LocalFileStorageAdapter';
 import { GoogleSheetsExternalSyncAdapter } from '../infrastructure/sync/GoogleSheetsExternalSyncAdapter';
+import { IncomingFolderWatcher, type WatcherLogger } from '../infrastructure/watcher/IncomingFolderWatcher';
 import { MetadatosOficioSchema } from '../contracts/schemas/metadatosOficio.schema';
 import { loadEnv } from './config/env';
 import { documentRoutes } from './routes/document.routes';
@@ -85,6 +87,15 @@ export async function buildServer() {
 
   await fastify.register(websocket);
 
+  // Límite por IP sobre TODAS las rutas registradas después de este punto (/health se
+  // exime explícitamente más abajo — los monitores de infraestructura lo golpean con
+  // más frecuencia que cualquier uso humano real). Generoso por diseño: ver el
+  // comentario de rateLimitMax/rateLimitWindowMs en config/env.ts.
+  await fastify.register(rateLimit, {
+    max: env.rateLimitMax,
+    timeWindow: env.rateLimitWindowMs,
+  });
+
   // ===========================================================================
   // COMPOSITION ROOT — Inyección de Dependencias manual de los 7 puertos
   // ===========================================================================
@@ -116,7 +127,15 @@ export async function buildServer() {
     rpaInjection = new PlaywrightRpaInjectionAdapter();
   }
 
-  const externalSync = new GoogleSheetsExternalSyncAdapter();
+  // Google Sheets: sin GOOGLE_SHEETS_SPREADSHEET_ID configurado, el adaptador queda
+  // `configured === false` y degrada exactamente como el placeholder anterior — ver su
+  // docstring para las credenciales requeridas (GOOGLE_SERVICE_ACCOUNT_JSON o
+  // GOOGLE_APPLICATION_CREDENTIALS) antes de usarlo en producción.
+  const externalSync = new GoogleSheetsExternalSyncAdapter({
+    spreadsheetId: env.googleSheetsSpreadsheetId,
+    sheetName: env.googleSheetsSheetName,
+    serviceAccountJson: env.googleServiceAccountJson,
+  });
 
   // Puerto 7 (P1, docs/prd.md §2.2): búsqueda semántica local. Reutiliza la misma
   // conexión/archivo SQLite que `repository` (better-sqlite3 es síncrono, un solo hilo
@@ -137,6 +156,26 @@ export async function buildServer() {
     semanticProvider
   );
 
+  // Ingesta SCANNER_ADF (prd.md §2.1, "Ingesta Dual"): vigila storage/01_entrada/ por
+  // polling y dispara orchestrator.ingestAndExtract automáticamente — ver docstring de
+  // IncomingFolderWatcher sobre por qué polling (no fs.watch) y cómo evita
+  // reingerir archivos depositados por la ruta HTTP de Drag & Drop.
+  const watcherLogger: WatcherLogger = {
+    info: (msg, meta) => (meta === undefined ? fastify.log.info(msg) : fastify.log.info({ meta }, msg)),
+    warn: (msg, meta) => (meta === undefined ? fastify.log.warn(msg) : fastify.log.warn({ meta }, msg)),
+    error: (msg, meta) => (meta === undefined ? fastify.log.error(msg) : fastify.log.error({ meta }, msg)),
+  };
+  const incomingFolderWatcher = new IncomingFolderWatcher({
+    storageRoot: env.storageRoot,
+    orchestrator,
+    intervalMs: env.watchfolderPollIntervalMs,
+    stableForMs: env.watchfolderStableForMs,
+    logger: watcherLogger,
+  });
+  if (env.watchfolderEnabled) {
+    incomingFolderWatcher.start();
+  }
+
   // ===========================================================================
   // RUTAS
   // ===========================================================================
@@ -155,16 +194,25 @@ export async function buildServer() {
     });
   });
 
-  fastify.get('/health', async () => ({
-    status: 'ok',
-    intranet: await rpaInjection.checkIntranetHealth(),
-    sheets: await externalSync.checkConnection(),
-    // No dispara la carga del modelo — solo refleja si ya se inicializó por una
-    // indexación/búsqueda previa (ver comentario en la instanciación de semanticProvider).
-    semantic: semanticProvider.modeloEstado,
-  }));
+  fastify.route({
+    method: 'GET',
+    url: '/health',
+    // Eximido del rate limit global: lo golpean monitores/orquestadores de
+    // infraestructura con más frecuencia de lo que cualquier capturista real llamaría a
+    // /documents — no debe competir por la misma cuota.
+    config: { rateLimit: false },
+    handler: async () => ({
+      status: 'ok',
+      intranet: await rpaInjection.checkIntranetHealth(),
+      sheets: await externalSync.checkConnection(),
+      // No dispara la carga del modelo — solo refleja si ya se inicializó por una
+      // indexación/búsqueda previa (ver comentario en la instanciación de semanticProvider).
+      semantic: semanticProvider.modeloEstado,
+    }),
+  });
 
   fastify.addHook('onClose', async () => {
+    incomingFolderWatcher.stop();
     eventsHub.dispose();
     repository.close();
     await rpaBrowser?.close().catch(() => undefined);

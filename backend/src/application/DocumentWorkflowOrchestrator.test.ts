@@ -7,7 +7,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 
-import { DocumentWorkflowOrchestrator } from './DocumentWorkflowOrchestrator';
+import { DocumentWorkflowOrchestrator, PdfPreprocessFailedError } from './DocumentWorkflowOrchestrator';
 
 import type {
   DocumentoRegistro,
@@ -15,14 +15,11 @@ import type {
   PreprocesoMetadata,
   RpaEjecucion,
   GoogleSheetsSync,
-  DocumentoEstado
+  DocumentoEstado,
 } from '../contracts/types';
 
 import type { IFileStorageProvider } from '../contracts/IFileStorageProvider';
-import type {
-  IDocumentRepository,
-  RepositoryErrorCode
-} from '../contracts/IDocumentRepository';
+import type { IDocumentRepository, RepositoryErrorCode } from '../contracts/IDocumentRepository';
 import type { IPdfProcessorProvider } from '../contracts/IPdfProcessorProvider';
 import type { IAIExtractorProvider } from '../contracts/IAIExtractorProvider';
 import type { IRpaInjectionProvider } from '../contracts/IRpaInjectionProvider';
@@ -66,7 +63,7 @@ const validMetadata: MetadatosOficio = {
   asunto:
     'SOLICITUD DE DICTAMEN TÉCNICO Y FINANCIERO PARA LA ADQUISICIÓN DE EQUIPO MÉDICO DE ALTA ESPECIALIDAD CORRESPONDIENTE AL EJERCICIO FISCAL 2026.',
   plazoDias: 5,
-  contieneDatosSensibles: false
+  contieneDatosSensibles: false,
 };
 
 const preproceso: PreprocesoMetadata = {
@@ -75,17 +72,17 @@ const preproceso: PreprocesoMetadata = {
   sha256Hash: 'a1b2c3d4e5f67890123456789abcdef0123456789abcdef0123456789abcdef0',
   paginas: [
     { pageNumber: 1, widthPx: 2480, heightPx: 3508, dpi: 300 },
-    { pageNumber: 2, widthPx: 2480, heightPx: 3508, dpi: 300 }
+    { pageNumber: 2, widthPx: 2480, heightPx: 3508, dpi: 300 },
   ],
   processingDurationMs: 420,
-  isSanitized: true
+  isSanitized: true,
 };
 
 const sheetsSuccess: GoogleSheetsSync = {
   sincronizado: true,
   filaIndex: 142,
   timestampSincronizacion: '2026-09-01T14:35:12.800Z',
-  errorSincronizacion: null
+  errorSincronizacion: null,
 };
 
 const rpaSuccess: RpaEjecucion = {
@@ -97,20 +94,16 @@ const rpaSuccess: RpaEjecucion = {
   capturaAcusePath: 'storage/03_procesados/2026/09/acuse_f5b61a9c.png',
   intentos: 1,
   mensajeError: null,
-  exitoso: true
+  exitoso: true,
 };
 
 const canonicalStorageResult = {
-  canonicalPdfPath:
-    'storage/03_procesados/2026/09/2026-09-01__DSA-1042-2026__DIR-GRAL-HCG.pdf',
-  mirrorJsonPath:
-    'storage/03_procesados/2026/09/2026-09-01__DSA-1042-2026__DIR-GRAL-HCG.json',
-  sha256Hash: preproceso.sha256Hash
+  canonicalPdfPath: 'storage/03_procesados/2026/09/2026-09-01__DSA-1042-2026__DIR-GRAL-HCG.pdf',
+  mirrorJsonPath: 'storage/03_procesados/2026/09/2026-09-01__DSA-1042-2026__DIR-GRAL-HCG.json',
+  sha256Hash: preproceso.sha256Hash,
 };
 
-const buildDocument = (
-  overrides: Partial<DocumentoRegistro> = {}
-): DocumentoRegistro => ({
+const buildDocument = (overrides: Partial<DocumentoRegistro> = {}): DocumentoRegistro => ({
   id: 'doc-1',
   nombreArchivoOriginal: 'SCAN_20260901_0042.pdf',
   nombreArchivoCanonico: null,
@@ -127,7 +120,7 @@ const buildDocument = (
     sincronizado: false,
     filaIndex: null,
     timestampSincronizacion: null,
-    errorSincronizacion: null
+    errorSincronizacion: null,
   },
   revisorUsuarioId: null,
   fechaIngesta: nowIso,
@@ -135,7 +128,7 @@ const buildDocument = (
   fechaFinalizacion: null,
   updatedAt: nowIso,
   version: 1,
-  ...overrides
+  ...overrides,
 });
 
 // --------------------------------------------------------------------
@@ -171,7 +164,7 @@ describe('DocumentWorkflowOrchestrator', () => {
       moveToCanonical: vi.fn(),
       moveToError: vi.fn(),
       readFile: vi.fn(),
-      exists: vi.fn()
+      exists: vi.fn(),
     };
 
     storage.saveIncoming.mockResolvedValue('storage/01_entrada/file.pdf');
@@ -195,7 +188,7 @@ describe('DocumentWorkflowOrchestrator', () => {
       updateExtractedMetadata: vi.fn(),
       updateHitlValidation: vi.fn(),
       updateRpaExecution: vi.fn(),
-      updateSheetsSync: vi.fn()
+      updateSheetsSync: vi.fn(),
     };
 
     repository.create.mockImplementation(async (dto: Partial<DocumentoRegistro>) =>
@@ -204,7 +197,7 @@ describe('DocumentWorkflowOrchestrator', () => {
         id: 'doc-1',
         version: 1,
         fechaIngesta: nowIso,
-        updatedAt: nowIso
+        updatedAt: nowIso,
       })
     );
 
@@ -213,42 +206,31 @@ describe('DocumentWorkflowOrchestrator', () => {
     repository.findByFolio.mockResolvedValue(null);
     repository.findMany.mockResolvedValue([]);
 
-    repository.updateStatus.mockImplementation(
-      async (id: string, estado: DocumentoEstado, version: number) =>
-        buildDocument({
-          id,
-          estado,
-          version: version + 1
-        })
+    repository.updateStatus.mockImplementation(async (id: string, estado: DocumentoEstado, version: number) =>
+      buildDocument({
+        id,
+        estado,
+        version: version + 1,
+      })
     );
 
     repository.updatePreprocessMetadata.mockImplementation(
-      async (
-        id: string,
-        preprocess: PreprocesoMetadata,
-        nextStatus: DocumentoEstado,
-        version: number
-      ) =>
+      async (id: string, preprocess: PreprocesoMetadata, nextStatus: DocumentoEstado, version: number) =>
         buildDocument({
           id,
           preproceso: preprocess,
           estado: nextStatus,
-          version: version + 1
+          version: version + 1,
         })
     );
 
     repository.updateExtractedMetadata.mockImplementation(
-      async (
-        id: string,
-        extractedMetadata: MetadatosOficio,
-        nextStatus: DocumentoEstado,
-        version: number
-      ) =>
+      async (id: string, extractedMetadata: MetadatosOficio, nextStatus: DocumentoEstado, version: number) =>
         buildDocument({
           id,
           metadatosExtraidos: extractedMetadata,
           estado: nextStatus,
-          version: version + 1
+          version: version + 1,
         })
     );
 
@@ -269,32 +251,26 @@ describe('DocumentWorkflowOrchestrator', () => {
           revisorUsuarioId: userId,
           estado: 'APROBADO_HITL',
           fechaValidacionHitl: nowIso,
-          version: version + 1
+          version: version + 1,
         })
     );
 
     repository.updateRpaExecution.mockImplementation(
-      async (
-        id: string,
-        rpaExecution: RpaEjecucion,
-        finalStatus: DocumentoEstado,
-        version: number
-      ) =>
+      async (id: string, rpaExecution: RpaEjecucion, finalStatus: DocumentoEstado, version: number) =>
         buildDocument({
           id,
           rpa: rpaExecution,
           estado: finalStatus,
-          version: version + 1
+          version: version + 1,
         })
     );
 
-    repository.updateSheetsSync.mockImplementation(
-      async (id: string, sync: GoogleSheetsSync, version: number) =>
-        buildDocument({
-          id,
-          sheetsSync: sync,
-          version: version + 1
-        })
+    repository.updateSheetsSync.mockImplementation(async (id: string, sync: GoogleSheetsSync, version: number) =>
+      buildDocument({
+        id,
+        sheetsSync: sync,
+        version: version + 1,
+      })
     );
 
     // ----------------------------------------------------------------
@@ -303,12 +279,12 @@ describe('DocumentWorkflowOrchestrator', () => {
     pdfProcessor = {
       inspectAndSanitize: vi.fn(),
       renderPagesForInference: vi.fn(),
-      hasValidPdfHeader: vi.fn()
+      hasValidPdfHeader: vi.fn(),
     };
 
     pdfProcessor.inspectAndSanitize.mockResolvedValue({
       metadata: preproceso,
-      sanitizedBuffer: new Uint8Array([4, 5, 6])
+      sanitizedBuffer: new Uint8Array([4, 5, 6]),
     });
 
     pdfProcessor.renderPagesForInference.mockResolvedValue([]);
@@ -319,7 +295,7 @@ describe('DocumentWorkflowOrchestrator', () => {
     // ----------------------------------------------------------------
     aiExtractor = {
       extractFromPages: vi.fn(),
-      ping: vi.fn()
+      ping: vi.fn(),
     };
 
     aiExtractor.extractFromPages.mockResolvedValue({
@@ -328,8 +304,8 @@ describe('DocumentWorkflowOrchestrator', () => {
         promptTokens: 1200,
         completionTokens: 450,
         latencyMs: 980,
-        modelVersion: 'gemini-2.5-flash'
-      }
+        modelVersion: 'gemini-2.5-flash',
+      },
     });
 
     aiExtractor.ping.mockResolvedValue(true);
@@ -340,7 +316,7 @@ describe('DocumentWorkflowOrchestrator', () => {
     rpa = {
       injectDocument: vi.fn(),
       retryInjection: vi.fn(),
-      checkIntranetHealth: vi.fn()
+      checkIntranetHealth: vi.fn(),
     };
 
     rpa.injectDocument.mockResolvedValue(rpaSuccess);
@@ -354,7 +330,7 @@ describe('DocumentWorkflowOrchestrator', () => {
       appendDocumentRow: vi.fn(),
       updateRowRpaStatus: vi.fn(),
       appendBatchRows: vi.fn(),
-      checkConnection: vi.fn()
+      checkConnection: vi.fn(),
     };
 
     externalSync.appendDocumentRow.mockResolvedValue(sheetsSuccess);
@@ -373,7 +349,7 @@ describe('DocumentWorkflowOrchestrator', () => {
       batchIndex: vi.fn(),
       searchSimilar: vi.fn(),
       removeEmbedding: vi.fn(),
-      countEmbeddings: vi.fn()
+      countEmbeddings: vi.fn(),
     };
 
     semanticProvider.initialize.mockResolvedValue(undefined);
@@ -384,13 +360,13 @@ describe('DocumentWorkflowOrchestrator', () => {
       dimension: 1024,
       documentString: '',
       contentHash: '',
-      creadoEn: nowIso
+      creadoEn: nowIso,
     });
     semanticProvider.searchSimilar.mockResolvedValue({
       documentos: [],
       totalVectoresComparados: 0,
       duracionMs: 0,
-      modeloEstado: 'LISTO'
+      modeloEstado: 'LISTO',
     } satisfies ResultadoBusquedaSemantica);
     semanticProvider.countEmbeddings.mockReturnValue(0);
 
@@ -425,11 +401,7 @@ describe('DocumentWorkflowOrchestrator', () => {
     // respecto al boceto síncrono original. El render + extracción por Gemini continúa
     // en `continueExtractionInBackground` (fire-and-forget) y se observa aquí vía
     // `vi.waitFor` sobre las mismas mutaciones que dispararía el WebSocket en producción.
-    const result = await orchestrator.ingestAndExtract(
-      'SCAN_20260901_0042.pdf',
-      'SCANNER_ADF',
-      pdfBuffer
-    );
+    const result = await orchestrator.ingestAndExtract('SCAN_20260901_0042.pdf', 'SCANNER_ADF', pdfBuffer);
 
     expect(result.estado).toBe('PENDIENTE_EXTRACCION');
     expect(result.metadatosExtraidos).toBeNull();
@@ -444,7 +416,7 @@ describe('DocumentWorkflowOrchestrator', () => {
     expect(aiExtractor.extractFromPages).toHaveBeenCalledWith(
       [],
       expect.objectContaining({
-        contextYear: expect.any(Number)
+        contextYear: expect.any(Number),
       })
     );
 
@@ -466,14 +438,11 @@ describe('DocumentWorkflowOrchestrator', () => {
     // El contrato expone findByHash; funcionalmente equivale a existsByHash.
     repository.findByHash.mockResolvedValue(buildDocument({ id: 'documento-existente' }));
 
-    await expect(
-      orchestrator.ingestAndExtract('SCAN_20260901_0042.pdf', 'SCANNER_ADF', pdfBuffer)
-    ).rejects.toThrow(/duplicado/i);
-
-    expect(storage.moveToError).toHaveBeenCalledWith(
-      'storage/01_entrada/file.pdf',
-      'DUPLICATE_HASH_DETECTED'
+    await expect(orchestrator.ingestAndExtract('SCAN_20260901_0042.pdf', 'SCANNER_ADF', pdfBuffer)).rejects.toThrow(
+      /duplicado/i
     );
+
+    expect(storage.moveToError).toHaveBeenCalledWith('storage/01_entrada/file.pdf', 'DUPLICATE_HASH_DETECTED');
 
     expect(repository.create).not.toHaveBeenCalled();
     expect(aiExtractor.extractFromPages).not.toHaveBeenCalled();
@@ -489,7 +458,7 @@ describe('DocumentWorkflowOrchestrator', () => {
       estado: 'PENDIENTE_REVISION',
       version: 2,
       rutaArchivoActual: 'storage/02_en_proceso/doc-1.pdf',
-      metadatosExtraidos: validMetadata
+      metadatosExtraidos: validMetadata,
     });
 
     const approvedDoc = buildDocument({
@@ -498,25 +467,20 @@ describe('DocumentWorkflowOrchestrator', () => {
       version: 3,
       metadatosValidados: validMetadata,
       nombreArchivoCanonico: '2026-09-01__DSA-1042-2026__REMITENTE.pdf',
-      rutaEspejoJson: canonicalStorageResult.mirrorJsonPath
+      rutaEspejoJson: canonicalStorageResult.mirrorJsonPath,
     });
 
     const enRpaDoc = buildDocument({
       ...approvedDoc,
       estado: 'EN_RPA',
-      version: 4
+      version: 4,
     });
 
     repository.findById.mockResolvedValue(pendingDoc);
     repository.updateHitlValidation.mockResolvedValue(approvedDoc);
     repository.updateStatus.mockResolvedValue(enRpaDoc);
 
-    const returned = await orchestrator.confirmHitlAndExecutePipeline(
-      'doc-1',
-      validMetadata,
-      'USR-CAPTURISTA-01',
-      2
-    );
+    const returned = await orchestrator.confirmHitlAndExecutePipeline('doc-1', validMetadata, 'USR-CAPTURISTA-01', 2);
 
     expect(returned.estado).toBe('EN_RPA');
 
@@ -529,51 +493,33 @@ describe('DocumentWorkflowOrchestrator', () => {
     );
 
     await vi.waitFor(() => expect(rpa.injectDocument).toHaveBeenCalledTimes(1), {
-      timeout: 2000
+      timeout: 2000,
     });
 
-    await vi.waitFor(
-      () => expect(repository.updateRpaExecution).toHaveBeenCalledTimes(1),
-      { timeout: 2000 }
-    );
+    await vi.waitFor(() => expect(repository.updateRpaExecution).toHaveBeenCalledTimes(1), { timeout: 2000 });
 
-    await vi.waitFor(
-      () => expect(externalSync.appendDocumentRow).toHaveBeenCalledTimes(1),
-      { timeout: 2000 }
-    );
+    await vi.waitFor(() => expect(externalSync.appendDocumentRow).toHaveBeenCalledTimes(1), { timeout: 2000 });
 
-    await vi.waitFor(
-      () => expect(repository.updateSheetsSync).toHaveBeenCalledTimes(1),
-      { timeout: 2000 }
-    );
+    await vi.waitFor(() => expect(repository.updateSheetsSync).toHaveBeenCalledTimes(1), { timeout: 2000 });
 
     expect(rpa.injectDocument).toHaveBeenCalledWith(
       expect.objectContaining({
         documentId: 'doc-1',
         metadata: validMetadata,
-        canonicalPdfPath: canonicalStorageResult.canonicalPdfPath
+        canonicalPdfPath: canonicalStorageResult.canonicalPdfPath,
       })
     );
 
-    expect(repository.updateRpaExecution).toHaveBeenCalledWith(
-      'doc-1',
-      rpaSuccess,
-      'COMPLETADO',
-      expect.any(Number)
-    );
+    expect(repository.updateRpaExecution).toHaveBeenCalledWith('doc-1', rpaSuccess, 'COMPLETADO', expect.any(Number));
 
     expect(externalSync.appendDocumentRow).toHaveBeenCalledWith(
       expect.objectContaining({
         documentId: 'doc-1',
-        metadata: validMetadata
+        metadata: validMetadata,
       })
     );
 
-    expect(repository.updateSheetsSync).toHaveBeenCalledWith(
-      'doc-1',
-      sheetsSuccess,
-      expect.any(Number)
-    );
+    expect(repository.updateSheetsSync).toHaveBeenCalledWith('doc-1', sheetsSuccess, expect.any(Number));
   });
 
   // ------------------------------------------------------------------
@@ -586,23 +532,20 @@ describe('DocumentWorkflowOrchestrator', () => {
       estado: 'PENDIENTE_REVISION',
       version: 2,
       rutaArchivoActual: 'storage/02_en_proceso/doc-1.pdf',
-      metadatosExtraidos: validMetadata
+      metadatosExtraidos: validMetadata,
     });
 
     repository.findById.mockResolvedValue(pendingDoc);
 
     repository.updateHitlValidation.mockRejectedValue(
-      new RepositoryError(
-        'CONCURRENCY_VERSION_CONFLICT',
-        'El documento fue modificado por otro capturista.'
-      )
+      new RepositoryError('CONCURRENCY_VERSION_CONFLICT', 'El documento fue modificado por otro capturista.')
     );
 
-    await expect(
-      orchestrator.confirmHitlAndExecutePipeline('doc-1', validMetadata, 'USR-02', 2)
-    ).rejects.toMatchObject({
-      code: 'CONCURRENCY_VERSION_CONFLICT'
-    });
+    await expect(orchestrator.confirmHitlAndExecutePipeline('doc-1', validMetadata, 'USR-02', 2)).rejects.toMatchObject(
+      {
+        code: 'CONCURRENCY_VERSION_CONFLICT',
+      }
+    );
 
     expect(storage.moveToCanonical).toHaveBeenCalled();
     expect(rpa.injectDocument).not.toHaveBeenCalled();
@@ -622,7 +565,7 @@ describe('DocumentWorkflowOrchestrator', () => {
       capturaAcusePath: null,
       intentos: 1,
       mensajeError: 'TimeoutError: Target closed',
-      exitoso: false
+      exitoso: false,
     };
 
     const successSecondRpa: RpaEjecucion = {
@@ -631,7 +574,7 @@ describe('DocumentWorkflowOrchestrator', () => {
       intentos: 2,
       mensajeError: null,
       exitoso: true,
-      folioAcuseInstitucional: 'HCG-OP-2026-009821'
+      folioAcuseInstitucional: 'HCG-OP-2026-009821',
     };
 
     const errorDoc = buildDocument({
@@ -641,46 +584,40 @@ describe('DocumentWorkflowOrchestrator', () => {
       rutaArchivoActual: 'storage/03_procesados/2026/09/canonical.pdf',
       nombreArchivoCanonico: '2026-09-01__DSA-1042-2026__REMITENTE.pdf',
       metadatosValidados: validMetadata,
-      rpa: failedRpa
+      rpa: failedRpa,
     });
 
     const enRpaDoc1 = buildDocument({
       ...errorDoc,
       estado: 'EN_RPA',
-      version: 6
+      version: 6,
     });
 
     const afterFailDoc = buildDocument({
       ...errorDoc,
       estado: 'ERROR_RPA',
       version: 7,
-      rpa: failedRpa
+      rpa: failedRpa,
     });
 
     const enRpaDoc2 = buildDocument({
       ...afterFailDoc,
       estado: 'EN_RPA',
-      version: 8
+      version: 8,
     });
 
     const afterSuccessDoc = buildDocument({
       ...afterFailDoc,
       estado: 'COMPLETADO',
       version: 9,
-      rpa: successSecondRpa
+      rpa: successSecondRpa,
     });
 
-    repository.findById
-      .mockResolvedValueOnce(errorDoc)
-      .mockResolvedValueOnce(afterFailDoc);
+    repository.findById.mockResolvedValueOnce(errorDoc).mockResolvedValueOnce(afterFailDoc);
 
-    repository.updateStatus
-      .mockResolvedValueOnce(enRpaDoc1)
-      .mockResolvedValueOnce(enRpaDoc2);
+    repository.updateStatus.mockResolvedValueOnce(enRpaDoc1).mockResolvedValueOnce(enRpaDoc2);
 
-    repository.updateRpaExecution
-      .mockResolvedValueOnce(afterFailDoc)
-      .mockResolvedValueOnce(afterSuccessDoc);
+    repository.updateRpaExecution.mockResolvedValueOnce(afterFailDoc).mockResolvedValueOnce(afterSuccessDoc);
 
     rpa.injectDocument
       .mockRejectedValueOnce(new Error('TimeoutError: Target closed'))
@@ -689,17 +626,14 @@ describe('DocumentWorkflowOrchestrator', () => {
     // Primer reintento: falla RPA
     await orchestrator.retryRpaExecution('doc-error', 5);
 
-    await vi.waitFor(
-      () => expect(repository.updateRpaExecution).toHaveBeenCalledTimes(1),
-      { timeout: 2000 }
-    );
+    await vi.waitFor(() => expect(repository.updateRpaExecution).toHaveBeenCalledTimes(1), { timeout: 2000 });
 
     expect(repository.updateRpaExecution).toHaveBeenNthCalledWith(
       1,
       'doc-error',
       expect.objectContaining({
         exitoso: false,
-        mensajeError: expect.stringContaining('TimeoutError')
+        mensajeError: expect.stringContaining('TimeoutError'),
       }),
       'ERROR_RPA',
       6
@@ -708,35 +642,20 @@ describe('DocumentWorkflowOrchestrator', () => {
     // Segundo reintento: RPA exitoso
     await orchestrator.retryRpaExecution('doc-error', 7);
 
-    await vi.waitFor(
-      () => expect(repository.updateRpaExecution).toHaveBeenCalledTimes(2),
-      { timeout: 2000 }
-    );
+    await vi.waitFor(() => expect(repository.updateRpaExecution).toHaveBeenCalledTimes(2), { timeout: 2000 });
 
     expect(rpa.injectDocument).toHaveBeenCalledTimes(2);
 
-    expect(repository.updateRpaExecution).toHaveBeenNthCalledWith(
-      2,
-      'doc-error',
-      successSecondRpa,
-      'COMPLETADO',
-      8
-    );
+    expect(repository.updateRpaExecution).toHaveBeenNthCalledWith(2, 'doc-error', successSecondRpa, 'COMPLETADO', 8);
 
-    await vi.waitFor(
-      () => expect(externalSync.appendDocumentRow).toHaveBeenCalledTimes(1),
-      { timeout: 2000 }
-    );
+    await vi.waitFor(() => expect(externalSync.appendDocumentRow).toHaveBeenCalledTimes(1), { timeout: 2000 });
 
-    await vi.waitFor(
-      () => expect(repository.updateSheetsSync).toHaveBeenCalledTimes(1),
-      { timeout: 2000 }
-    );
+    await vi.waitFor(() => expect(repository.updateSheetsSync).toHaveBeenCalledTimes(1), { timeout: 2000 });
 
     expect(externalSync.appendDocumentRow).toHaveBeenCalledWith(
       expect.objectContaining({
         documentId: 'doc-error',
-        metadata: validMetadata
+        metadata: validMetadata,
       })
     );
   });
@@ -779,7 +698,7 @@ describe('DocumentWorkflowOrchestrator', () => {
       id: 'doc-err-ext',
       estado: 'ERROR_EXTRACCION',
       version: 3,
-      rutaArchivoActual: 'storage/04_errores/doc-err-ext.pdf'
+      rutaArchivoActual: 'storage/04_errores/doc-err-ext.pdf',
     });
 
     repository.findById.mockResolvedValue(erroredDoc);
@@ -824,7 +743,7 @@ describe('DocumentWorkflowOrchestrator', () => {
       estado: 'PENDIENTE_REVISION',
       version: 2,
       rutaArchivoActual: 'storage/02_en_proceso/doc-1.pdf',
-      metadatosExtraidos: validMetadata
+      metadatosExtraidos: validMetadata,
     });
 
     repository.findById.mockResolvedValue(pendingDoc);
@@ -836,7 +755,7 @@ describe('DocumentWorkflowOrchestrator', () => {
     expect(semanticProvider.indexDocument).toHaveBeenCalledWith('doc-1', {
       dependenciaArea: validMetadata.dependenciaArea,
       remitenteNombre: validMetadata.remitenteNombre,
-      asunto: validMetadata.asunto
+      asunto: validMetadata.asunto,
     });
   });
 
@@ -846,7 +765,7 @@ describe('DocumentWorkflowOrchestrator', () => {
       estado: 'PENDIENTE_REVISION',
       version: 2,
       rutaArchivoActual: 'storage/02_en_proceso/doc-1.pdf',
-      metadatosExtraidos: validMetadata
+      metadatosExtraidos: validMetadata,
     });
 
     repository.findById.mockResolvedValue(pendingDoc);
@@ -869,7 +788,7 @@ describe('DocumentWorkflowOrchestrator', () => {
       id: 'doc-1',
       estado: 'COMPLETADO',
       metadatosValidados: validMetadata,
-      metadatosExtraidos: validMetadata
+      metadatosExtraidos: validMetadata,
     });
     repository.findById.mockResolvedValue(completedDoc);
 
@@ -882,12 +801,12 @@ describe('DocumentWorkflowOrchestrator', () => {
           dependenciaArea: validMetadata.dependenciaArea,
           asunto: 'ASUNTO SIMILAR',
           similitudScore: 0.91,
-          esCandidatoVinculacion: true
-        }
+          esCandidatoVinculacion: true,
+        },
       ],
       totalVectoresComparados: 5,
       duracionMs: 12,
-      modeloEstado: 'LISTO'
+      modeloEstado: 'LISTO',
     };
     semanticProvider.searchSimilar.mockResolvedValue(related);
 
@@ -915,8 +834,131 @@ describe('DocumentWorkflowOrchestrator', () => {
       documentos: [],
       totalVectoresComparados: 0,
       duracionMs: 0,
-      modeloEstado: 'NO_INICIALIZADO'
+      modeloEstado: 'NO_INICIALIZADO',
     });
     expect(repository.findById).not.toHaveBeenCalled();
+  });
+
+  // ------------------------------------------------------------------
+  // Regresión: ERROR_PREPROCESO era inalcanzable — inspectAndSanitize()
+  // rechazando (PDF corrupto/con contraseña) no estaba envuelto en try/catch, así
+  // que no se creaba ningún registro ni se aislaba el archivo. Ver
+  // DocumentWorkflowOrchestrator.recordPreprocessFailure / retryPreprocess.
+  // ------------------------------------------------------------------
+
+  describe('ERROR_PREPROCESO (regresión: antes inalcanzable)', () => {
+    it('debe crear un registro ERROR_PREPROCESO, aislar el archivo en 04_errores y lanzar PdfPreprocessFailedError con el documentId', async () => {
+      const preprocessError = Object.assign(new Error('Estructura de PDF corrupta'), {
+        code: 'CORRUPTED_PDF_STRUCTURE',
+      });
+      pdfProcessor.inspectAndSanitize.mockRejectedValueOnce(preprocessError);
+
+      let caught: unknown;
+      try {
+        await orchestrator.ingestAndExtract('CORRUPTO.pdf', 'WEB_DRAG_DROP', pdfBuffer);
+      } catch (error) {
+        caught = error;
+      }
+
+      expect(caught).toBeInstanceOf(PdfPreprocessFailedError);
+      expect((caught as PdfPreprocessFailedError).documentId).toBe('doc-1');
+      expect((caught as PdfPreprocessFailedError).code).toBe('PDF_PREPROCESS_FAILED');
+
+      // El archivo se aísla (no queda huérfano en 01_entrada/) y el registro persiste
+      // con estado ERROR_PREPROCESO — antes del fix, ninguna de las dos cosas ocurría.
+      expect(storage.moveToError).toHaveBeenCalledWith(
+        'storage/01_entrada/file.pdf',
+        expect.stringContaining('CORRUPTED_PDF_STRUCTURE')
+      );
+      expect(repository.create).toHaveBeenCalledWith(
+        expect.objectContaining({ estado: 'ERROR_PREPROCESO', preproceso: null })
+      );
+
+      // No debe haber continuado hacia extracción de IA.
+      expect(aiExtractor.extractFromPages).not.toHaveBeenCalled();
+    });
+
+    it('no debe crear un segundo registro si el mismo archivo corrupto (mismo hash) se reintenta subir', async () => {
+      const preprocessError = Object.assign(new Error('PDF protegido con contraseña'), {
+        code: 'PASSWORD_PROTECTED_FILE',
+      });
+      pdfProcessor.inspectAndSanitize.mockRejectedValue(preprocessError);
+
+      const existingFailed = buildDocument({ id: 'doc-error-existente', estado: 'ERROR_PREPROCESO' });
+      repository.findByHash.mockResolvedValue(existingFailed);
+
+      const caught: PdfPreprocessFailedError = await orchestrator
+        .ingestAndExtract('CORRUPTO_OTRA_VEZ.pdf', 'WEB_DRAG_DROP', pdfBuffer)
+        .catch((error) => error);
+
+      expect(caught).toBeInstanceOf(PdfPreprocessFailedError);
+      expect(caught.documentId).toBe('doc-error-existente');
+      expect(repository.create).not.toHaveBeenCalled();
+      expect(storage.moveToError).toHaveBeenCalledWith(
+        'storage/01_entrada/file.pdf',
+        expect.stringContaining('INTENTO_DUPLICADO')
+      );
+    });
+
+    it('retryPreprocess debe reprocesar exitosamente y continuar a extracción de IA hasta PENDIENTE_REVISION', async () => {
+      const failedDoc = buildDocument({
+        id: 'doc-1',
+        estado: 'ERROR_PREPROCESO',
+        version: 2,
+        rutaArchivoActual: 'storage/04_errores/doc-1.pdf',
+        preproceso: null,
+      });
+      repository.findById.mockResolvedValue(failedDoc);
+      storage.readFile.mockResolvedValue(pdfBuffer);
+
+      const result = await orchestrator.retryPreprocess('doc-1', 2);
+
+      expect(storage.readFile).toHaveBeenCalledWith('storage/04_errores/doc-1.pdf');
+      expect(pdfProcessor.inspectAndSanitize).toHaveBeenCalledWith(pdfBuffer);
+      expect(storage.moveToInProcess).toHaveBeenCalledWith('storage/04_errores/doc-1.pdf', 'doc-1');
+      expect(repository.updatePreprocessMetadata).toHaveBeenCalledWith(
+        'doc-1',
+        preproceso,
+        'PENDIENTE_EXTRACCION',
+        expect.any(Number)
+      );
+      expect(result.estado).toBe('PENDIENTE_EXTRACCION');
+
+      await vi.waitFor(() => expect(repository.updateExtractedMetadata).toHaveBeenCalledTimes(1));
+      expect(repository.updateExtractedMetadata).toHaveBeenCalledWith(
+        'doc-1',
+        validMetadata,
+        'PENDIENTE_REVISION',
+        expect.any(Number)
+      );
+    });
+
+    it('retryPreprocess debe rechazar si el documento no está en estado ERROR_PREPROCESO', async () => {
+      repository.findById.mockResolvedValue(buildDocument({ id: 'doc-1', estado: 'PENDIENTE_REVISION', version: 3 }));
+
+      await expect(orchestrator.retryPreprocess('doc-1', 3)).rejects.toThrow(/no está en estado ERROR_PREPROCESO/i);
+      expect(storage.readFile).not.toHaveBeenCalled();
+    });
+
+    it('retryPreprocess debe lanzar PdfPreprocessFailedError si el archivo sigue corrupto, sin duplicar el registro', async () => {
+      const failedDoc = buildDocument({
+        id: 'doc-1',
+        estado: 'ERROR_PREPROCESO',
+        version: 2,
+        rutaArchivoActual: 'storage/04_errores/doc-1.pdf',
+      });
+      repository.findById.mockResolvedValue(failedDoc);
+      storage.readFile.mockResolvedValue(pdfBuffer);
+      pdfProcessor.inspectAndSanitize.mockRejectedValueOnce(
+        Object.assign(new Error('Sigue corrupto'), { code: 'CORRUPTED_PDF_STRUCTURE' })
+      );
+
+      const caught: PdfPreprocessFailedError = await orchestrator.retryPreprocess('doc-1', 2).catch((error) => error);
+
+      expect(caught).toBeInstanceOf(PdfPreprocessFailedError);
+      expect(caught.documentId).toBe('doc-1');
+      expect(repository.create).not.toHaveBeenCalled();
+      expect(storage.moveToInProcess).not.toHaveBeenCalled();
+    });
   });
 });

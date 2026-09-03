@@ -28,13 +28,21 @@ export class DocumentEventsHub implements WorkflowEventsListener {
     socket.on('error', () => this.sockets.delete(socket));
 
     if (!this.heartbeatTimer) {
-      this.heartbeatTimer = setInterval(() => this.broadcast({ type: 'HEARTBEAT', ts: new Date().toISOString() }), HEARTBEAT_INTERVAL_MS);
+      this.heartbeatTimer = setInterval(
+        () => this.broadcast({ type: 'HEARTBEAT', ts: new Date().toISOString() }),
+        HEARTBEAT_INTERVAL_MS
+      );
       this.heartbeatTimer.unref?.();
     }
   }
 
   onDocumentEvent(documentId: string, estado: DocumentoEstado, document?: Readonly<DocumentoRegistro>): void {
-    this.broadcast({ type: 'DOCUMENT_STATE_CHANGED', documentId, estado, document: document as DocumentoRegistro | undefined });
+    this.broadcast({
+      type: 'DOCUMENT_STATE_CHANGED',
+      documentId,
+      estado,
+      document: document as DocumentoRegistro | undefined,
+    });
 
     if (HITL_READY_STATES.has(estado) && document) {
       this.broadcast({ type: 'NEW_DOCUMENT_PENDING', documentId, document: document as DocumentoRegistro });

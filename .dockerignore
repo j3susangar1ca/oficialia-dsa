@@ -1,0 +1,24 @@
+# Aplica a build con contexto = raíz del monorepo, para ambos Dockerfiles
+# (backend/Dockerfile, frontend/Dockerfile) — un Dockerfile en un subdirectorio NO
+# recoge automáticamente un .dockerignore de ese mismo subdirectorio cuando el contexto
+# de build es la raíz; solo lee este archivo o `<dockerfile>.dockerignore` junto a él.
+
+.git
+**/node_modules
+**/dist
+**/.svelte-kit
+backend/.venv
+backend/data
+backend/storage/01_entrada/*
+backend/storage/02_en_proceso/*
+backend/storage/03_procesados/*
+backend/storage/04_errores/*
+!backend/storage/**/.gitkeep
+**/.env
+**/.env.local
+**/*.log
+**/__pycache__
+**/*.pyc
+docs
+*.md
+.github

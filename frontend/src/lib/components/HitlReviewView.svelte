@@ -81,15 +81,18 @@
     if (!d || formDisabled) return;
     const upper = (v: string) => v.toUpperCase();
 
-    if (d.dependenciaArea && d.dependenciaArea !== upper(d.dependenciaArea)) set('dependenciaArea', upper(d.dependenciaArea));
-    if (d.remitenteNombre && d.remitenteNombre !== upper(d.remitenteNombre)) set('remitenteNombre', upper(d.remitenteNombre));
-    if (d.remitenteCargo && d.remitenteCargo !== upper(d.remitenteCargo)) set('remitenteCargo', upper(d.remitenteCargo));
+    if (d.dependenciaArea && d.dependenciaArea !== upper(d.dependenciaArea))
+      set('dependenciaArea', upper(d.dependenciaArea));
+    if (d.remitenteNombre && d.remitenteNombre !== upper(d.remitenteNombre))
+      set('remitenteNombre', upper(d.remitenteNombre));
+    if (d.remitenteCargo && d.remitenteCargo !== upper(d.remitenteCargo))
+      set('remitenteCargo', upper(d.remitenteCargo));
     if (d.destinatarioNombre && d.destinatarioNombre !== upper(d.destinatarioNombre))
       set('destinatarioNombre', upper(d.destinatarioNombre));
     if (d.destinatarioCargo && d.destinatarioCargo !== upper(d.destinatarioCargo))
       set('destinatarioCargo', upper(d.destinatarioCargo));
 
-    const folioLimpio = (d.numeroOficio ?? '').replace(/[\/\\:*?"<>|]/g, '-');
+    const folioLimpio = (d.numeroOficio ?? '').replace(/[/\\:*?"<>|]/g, '-');
     if (d.numeroOficio !== folioLimpio) set('numeroOficio', folioLimpio);
   });
 
@@ -272,7 +275,14 @@
   // 3) CONFIRMACIÓN / REINTENTO
   // ============================================================
 
-  const CAMPOS_REQUERIDOS = ['numeroOficio', 'fechaEmision', 'dependenciaArea', 'remitenteNombre', 'destinatarioNombre', 'asunto'];
+  const CAMPOS_REQUERIDOS = [
+    'numeroOficio',
+    'fechaEmision',
+    'dependenciaArea',
+    'remitenteNombre',
+    'destinatarioNombre',
+    'asunto',
+  ];
 
   async function confirmar(): Promise<void> {
     tocadas = Object.fromEntries(CAMPOS_REQUERIDOS.map((c) => [c, true]));
@@ -334,26 +344,62 @@
     aria-label="Visor de documento PDF"
   >
     <div class="flex items-center gap-1 border-b border-slate-200 bg-white px-3 py-2">
-      <button type="button" class="visor-btn" title="Página anterior (←)" onclick={paginaAnterior} disabled={hitl.viewSettings.currentPage <= 1 || cargandoPdf}>
-        <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M12.79 5.23a.75.75 0 0 1 0 1.06L9.06 10l3.73 3.71a.75.75 0 1 1-1.06 1.06l-4.25-4.25a.75.75 0 0 1 0-1.06l4.25-4.25a.75.75 0 0 1 1.06 0Z" clip-rule="evenodd" /></svg>
+      <button
+        type="button"
+        class="visor-btn"
+        title="Página anterior (←)"
+        onclick={paginaAnterior}
+        disabled={hitl.viewSettings.currentPage <= 1 || cargandoPdf}
+      >
+        <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"
+          ><path
+            fill-rule="evenodd"
+            d="M12.79 5.23a.75.75 0 0 1 0 1.06L9.06 10l3.73 3.71a.75.75 0 1 1-1.06 1.06l-4.25-4.25a.75.75 0 0 1 0-1.06l4.25-4.25a.75.75 0 0 1 1.06 0Z"
+            clip-rule="evenodd"
+          /></svg
+        >
       </button>
       <span class="min-w-[4.5rem] text-center text-xs tabular-nums text-slate-500">
         {hitl.viewSettings.currentPage} / {hitl.viewSettings.totalPages || '—'}
       </span>
-      <button type="button" class="visor-btn" title="Página siguiente (→)" onclick={paginaSiguiente} disabled={hitl.viewSettings.currentPage >= hitl.viewSettings.totalPages || cargandoPdf}>
-        <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 0 1 0-1.06L10.94 10 7.21 6.29a.75.75 0 1 1 1.06-1.06l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0Z" clip-rule="evenodd" /></svg>
+      <button
+        type="button"
+        class="visor-btn"
+        title="Página siguiente (→)"
+        onclick={paginaSiguiente}
+        disabled={hitl.viewSettings.currentPage >= hitl.viewSettings.totalPages || cargandoPdf}
+      >
+        <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"
+          ><path
+            fill-rule="evenodd"
+            d="M7.21 14.77a.75.75 0 0 1 0-1.06L10.94 10 7.21 6.29a.75.75 0 1 1 1.06-1.06l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0Z"
+            clip-rule="evenodd"
+          /></svg
+        >
       </button>
 
       <span class="mx-1 h-5 w-px bg-slate-200"></span>
 
       <button type="button" class="visor-btn" title="Alejar (-)" onclick={zoomOut} disabled={cargandoPdf}>
-        <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path d="M4.25 9.25a.75.75 0 0 0 0 1.5h11.5a.75.75 0 0 0 0-1.5H4.25Z" /></svg>
+        <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"
+          ><path d="M4.25 9.25a.75.75 0 0 0 0 1.5h11.5a.75.75 0 0 0 0-1.5H4.25Z" /></svg
+        >
       </button>
       <button type="button" class="visor-btn" title="Acercar (+)" onclick={zoomIn} disabled={cargandoPdf}>
-        <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path d="M10 4.25a.75.75 0 0 1 .75.75v4.25H15a.75.75 0 0 1 0 1.5h-4.25V15a.75.75 0 0 1-1.5 0v-4.25H5a.75.75 0 0 1 0-1.5h4.25V5a.75.75 0 0 1 .75-.75Z" /></svg>
+        <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"
+          ><path
+            d="M10 4.25a.75.75 0 0 1 .75.75v4.25H15a.75.75 0 0 1 0 1.5h-4.25V15a.75.75 0 0 1-1.5 0v-4.25H5a.75.75 0 0 1 0-1.5h4.25V5a.75.75 0 0 1 .75-.75Z"
+          /></svg
+        >
       </button>
       <button type="button" class="visor-btn" title="Rotar 90° (R)" onclick={rotar} disabled={cargandoPdf}>
-        <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4.755 10.059a5.25 5.25 0 0 1 8.897-2.588L15.312 9.11a.75.75 0 0 0 1.28-.53V4a.75.75 0 0 0-1.5 0v1.638l-1.293-1.292a6.75 6.75 0 1 0 1.933 5.925.75.75 0 0 0-1.485-.21 5.25 5.25 0 1 1-9.492.998Z" clip-rule="evenodd" /></svg>
+        <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"
+          ><path
+            fill-rule="evenodd"
+            d="M4.755 10.059a5.25 5.25 0 0 1 8.897-2.588L15.312 9.11a.75.75 0 0 0 1.28-.53V4a.75.75 0 0 0-1.5 0v1.638l-1.293-1.292a6.75 6.75 0 1 0 1.933 5.925.75.75 0 0 0-1.485-.21 5.25 5.25 0 1 1-9.492.998Z"
+            clip-rule="evenodd"
+          /></svg
+        >
       </button>
       <button
         type="button"
@@ -362,10 +408,17 @@
         onclick={ajustarAncho}
         disabled={cargandoPdf}
       >
-        <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3.25 4A1.75 1.75 0 0 0 1.5 5.75v8.5c0 .966.784 1.75 1.75 1.75h13.5A1.75 1.75 0 0 0 18.5 14.25v-8.5A1.75 1.75 0 0 0 16.75 4H3.25ZM3 5.75A.25.25 0 0 1 3.25 5.5h13.5a.25.25 0 0 1 .25.25v8.5a.25.25 0 0 1-.25.25H3.25a.25.25 0 0 1-.25-.25v-8.5Z" clip-rule="evenodd" /></svg>
+        <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"
+          ><path
+            fill-rule="evenodd"
+            d="M3.25 4A1.75 1.75 0 0 0 1.5 5.75v8.5c0 .966.784 1.75 1.75 1.75h13.5A1.75 1.75 0 0 0 18.5 14.25v-8.5A1.75 1.75 0 0 0 16.75 4H3.25ZM3 5.75A.25.25 0 0 1 3.25 5.5h13.5a.25.25 0 0 1 .25.25v8.5a.25.25 0 0 1-.25.25H3.25a.25.25 0 0 1-.25-.25v-8.5Z"
+            clip-rule="evenodd"
+          /></svg
+        >
       </button>
 
-      <span class="ml-auto hidden text-[11px] text-slate-400 sm:block">{Math.round(hitl.viewSettings.zoom * 100)}%</span>
+      <span class="ml-auto hidden text-[11px] text-slate-400 sm:block">{Math.round(hitl.viewSettings.zoom * 100)}%</span
+      >
     </div>
 
     <div class="relative flex flex-1 items-start justify-center overflow-auto p-4">
@@ -392,7 +445,10 @@
   <!-- ============================================================ -->
   <!-- PANEL DERECHO — CONTEXTO + FORMULARIO REACTIVO                -->
   <!-- ============================================================ -->
-  <section class="flex h-1/2 flex-col overflow-hidden lg:h-full lg:w-1/2" aria-label="Formulario de validación de metadatos">
+  <section
+    class="flex h-1/2 flex-col overflow-hidden lg:h-full lg:w-1/2"
+    aria-label="Formulario de validación de metadatos"
+  >
     <!-- Barra de contexto del documento -->
     <header class="border-b border-slate-200 bg-white px-5 py-3">
       <div class="flex items-start justify-between gap-3">
@@ -408,8 +464,17 @@
             {meta.label}
           </span>
           {#if oncancel}
-            <button type="button" class="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600" title="Cerrar" onclick={oncancel}>
-              <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path d="m6.28 5.22 8.5 8.5a.75.75 0 1 1-1.06 1.06l-8.5-8.5a.75.75 0 0 1 1.06-1.06Z" /><path d="m14.78 6.28-8.5 8.5a.75.75 0 0 1-1.06-1.06l8.5-8.5a.75.75 0 1 1 1.06 1.06Z" /></svg>
+            <button
+              type="button"
+              class="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+              title="Cerrar"
+              onclick={oncancel}
+            >
+              <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"
+                ><path d="m6.28 5.22 8.5 8.5a.75.75 0 1 1-1.06 1.06l-8.5-8.5a.75.75 0 0 1 1.06-1.06Z" /><path
+                  d="m14.78 6.28-8.5 8.5a.75.75 0 0 1-1.06-1.06l8.5-8.5a.75.75 0 1 1 1.06 1.06Z"
+                /></svg
+              >
             </button>
           {/if}
         </div>
@@ -418,7 +483,11 @@
       <!-- Progreso del pipeline -->
       <div class="mt-3 h-1 w-full overflow-hidden rounded-full bg-slate-100">
         <div
-          class="h-full rounded-full transition-all duration-500 {hitl.pipelineHasFailed ? 'bg-rose-500' : documento.estado === 'COMPLETADO' ? 'bg-emerald-500' : 'bg-brand-500'}"
+          class="h-full rounded-full transition-all duration-500 {hitl.pipelineHasFailed
+            ? 'bg-rose-500'
+            : documento.estado === 'COMPLETADO'
+              ? 'bg-emerald-500'
+              : 'bg-brand-500'}"
           style="width: {hitl.pipelineProgress}%"
         ></div>
       </div>
@@ -437,7 +506,9 @@
           <p class="font-semibold text-slate-700">Registro en Intranet (op_cucs.fwx)</p>
           {#if documento.rpa?.folioAcuseInstitucional}
             <p class="mt-1">
-              Folio de acuse: <span class="font-mono font-medium text-slate-800">{documento.rpa.folioAcuseInstitucional}</span>
+              Folio de acuse: <span class="font-mono font-medium text-slate-800"
+                >{documento.rpa.folioAcuseInstitucional}</span
+              >
             </p>
           {:else if documento.estado === 'EN_RPA'}
             <p class="mt-1 flex items-center gap-1.5 text-brand-600">
@@ -449,6 +520,23 @@
           {/if}
           <p class="mt-1 text-slate-400">
             Google Sheets: {documento.sheetsSync.sincronizado ? 'sincronizado' : 'pendiente de sincronizar'}
+          </p>
+        </div>
+      {/if}
+
+      {#if hitl.canRetryPreprocess}
+        <div class="mx-5 mt-3">
+          <button
+            type="button"
+            onclick={() => hitl.retryPreprocess()}
+            disabled={hitl.uiStatus.submitting}
+            class="w-full rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            ↻ Reintentar preprocesamiento del PDF
+          </button>
+          <p class="mt-1.5 text-center text-[11px] text-slate-400">
+            El documento no pudo procesarse (PDF corrupto o protegido con contraseña). Reintente tras corregirlo, o
+            descargue el archivo original desde el visor para revisarlo.
           </p>
         </div>
       {/if}
@@ -477,7 +565,8 @@
             ↻ Reintentar extracción de metadatos
           </button>
           <p class="mt-1.5 text-center text-[11px] text-slate-400">
-            Vuelve a enviar el documento al motor de IA (Gemini) — útil tras un timeout o una caída temporal del proveedor.
+            Vuelve a enviar el documento al motor de IA (Gemini) — útil tras un timeout o una caída temporal del
+            proveedor.
           </p>
         </div>
       {/if}
@@ -492,7 +581,7 @@
         <fieldset class="rounded-lg border border-slate-200 bg-white p-3" disabled={formDisabled}>
           <legend class="px-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Procedencia</legend>
           <div class="flex gap-4">
-            {#each [{ v: 'HCG', l: 'HCG (Interno)' }, { v: 'Ajena', l: 'Ajena (Externo)' }] as opt}
+            {#each [{ v: 'HCG', l: 'HCG (Interno)' }, { v: 'Ajena', l: 'Ajena (Externo)' }] as opt (opt.v)}
               <label class="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
                 <input
                   type="radio"
@@ -622,7 +711,9 @@
           </div>
 
           <div class="flex items-end">
-            <label class="flex w-full cursor-pointer items-center gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm">
+            <label
+              class="flex w-full cursor-pointer items-center gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm"
+            >
               <input
                 type="checkbox"
                 checked={draft.contieneDatosSensibles ?? false}
@@ -644,18 +735,29 @@
               disabled={formDisabled}
               rows="4"
               class="form-input resize-y {errVisible('asunto') ? 'input-error' : ''}"
-              placeholder="Síntesis del oficio (1 a 3 oraciones)."
-            ></textarea>
+              placeholder="Síntesis del oficio (1 a 3 oraciones)."></textarea>
             {#if errVisible('asunto')}<p class="form-error">{errVisible('asunto')}</p>{/if}
           </div>
         </div>
 
         <!-- Oficios relacionados (Puerto 7 — similitud semántica local) -->
         <div class="rounded-lg border border-slate-200 bg-white">
-          <button type="button" onclick={toggleRelacionados} class="flex w-full items-center justify-between px-3.5 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+          <button
+            type="button"
+            onclick={toggleRelacionados}
+            class="flex w-full items-center justify-between px-3.5 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500"
+          >
             Oficios relacionados
-            <svg class="h-4 w-4 transition-transform {relacionadosAbierto ? 'rotate-180' : ''}" viewBox="0 0 20 20" fill="currentColor">
-              <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.168l3.71-3.938a.75.75 0 1 1 1.08 1.04l-4.25 4.5a.75.75 0 0 1-1.08 0l-4.25-4.5a.75.75 0 0 1 .02-1.06Z" clip-rule="evenodd" />
+            <svg
+              class="h-4 w-4 transition-transform {relacionadosAbierto ? 'rotate-180' : ''}"
+              viewBox="0 0 20 20"
+              fill="currentColor"
+            >
+              <path
+                fill-rule="evenodd"
+                d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.168l3.71-3.938a.75.75 0 1 1 1.08 1.04l-4.25 4.5a.75.75 0 0 1-1.08 0l-4.25-4.5a.75.75 0 0 1 .02-1.06Z"
+                clip-rule="evenodd"
+              />
             </svg>
           </button>
           {#if relacionadosAbierto}
@@ -673,10 +775,14 @@
                   {#each relacionados as rel (rel.documentoId)}
                     <li class="flex items-center justify-between gap-2 rounded-md bg-slate-50 px-2.5 py-1.5">
                       <div class="min-w-0">
-                        <p class="truncate text-xs font-medium text-slate-700">{rel.numeroOficio ?? rel.nombreArchivoCanonico ?? rel.documentoId}</p>
+                        <p class="truncate text-xs font-medium text-slate-700">
+                          {rel.numeroOficio ?? rel.nombreArchivoCanonico ?? rel.documentoId}
+                        </p>
                         <p class="truncate text-[11px] text-slate-400">{rel.asunto ?? '—'}</p>
                       </div>
-                      <span class="shrink-0 rounded-full bg-white px-2 py-0.5 text-[11px] font-medium text-slate-500 ring-1 ring-slate-200">
+                      <span
+                        class="shrink-0 rounded-full bg-white px-2 py-0.5 text-[11px] font-medium text-slate-500 ring-1 ring-slate-200"
+                      >
                         {Math.round(rel.similitudScore * 100)}%
                       </span>
                     </li>
@@ -708,7 +814,8 @@
         {/if}
       </button>
       <p class="mt-2 text-center text-[11px] text-slate-400">
-        Se moverá a <code class="rounded bg-slate-100 px-1 py-0.5">storage/03_procesados/</code> y se inyectará vía RPA en <code class="rounded bg-slate-100 px-1 py-0.5">op_cucs.fwx</code>.
+        Se moverá a <code class="rounded bg-slate-100 px-1 py-0.5">storage/03_procesados/</code> y se inyectará vía RPA
+        en <code class="rounded bg-slate-100 px-1 py-0.5">op_cucs.fwx</code>.
       </p>
     </div>
   </section>

@@ -1,0 +1,84 @@
+# SISTEMA OFICIALIA-DIGITAL-DSA — Integración Continua
+#
+# No existía ningún workflow en el repo pese a que el README dedica una sección a
+# "Deployment & CI/CD" — en la práctica eran solo pasos manuales de despliegue, sin
+# pipeline que corriera typecheck/lint/tests en cada push o PR. Cuatro jobs en paralelo,
+# cada uno con su propio checkout (fresh runner) para no acoplar fallos entre ellos.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancela una corrida en curso si llega un push nuevo a la misma rama/PR — evita
+# desperdiciar minutos de CI en un commit ya obsoleto.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend — typecheck, lint, tests (Vitest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run typecheck:backend
+      - run: npm run test --workspace=backend
+      - run: npm run lint
+
+  frontend:
+    name: Frontend — svelte-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run check:frontend
+
+  format:
+    name: Prettier format check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run format:check
+
+  python-worker:
+    name: Python worker — sintaxis + import de dependencias
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r backend/scripts/requirements.txt
+      - run: python -m py_compile backend/scripts/pdf_worker.py
+      # Smoke test real: genera un PDF mínimo con PyMuPDF y lo pasa por el worker CLI
+      # (inspect) tal como lo invoca PythonPdfProcessorAdapter — detecta breakage de la
+      # integración PyMuPDF/Pillow real, no solo errores de sintaxis de Python.
+      - name: Smoke test — inspect sobre un PDF generado en el momento
+        run: |
+          python - <<'PY'
+          import pymupdf as fitz
+          doc = fitz.open()
+          doc.new_page().insert_text((72, 72), "CI smoke test")
+          doc.save("/tmp/ci-smoke.pdf")
+          PY
+          python backend/scripts/pdf_worker.py inspect < /tmp/ci-smoke.pdf

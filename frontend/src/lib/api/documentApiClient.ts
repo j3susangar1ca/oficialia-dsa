@@ -84,7 +84,10 @@ export class DocumentApiClient {
     return (await response.json()) as DocumentoRegistro[];
   }
 
-  async uploadDocument(file: File, origen: 'SCANNER_ADF' | 'WEB_DRAG_DROP' = 'WEB_DRAG_DROP'): Promise<{ documentId: string }> {
+  async uploadDocument(
+    file: File,
+    origen: 'SCANNER_ADF' | 'WEB_DRAG_DROP' = 'WEB_DRAG_DROP'
+  ): Promise<{ documentId: string }> {
     const formData = new FormData();
     formData.append('file', file, file.name);
 
@@ -153,6 +156,25 @@ export class DocumentApiClient {
   /** Reintenta render + extracción IA para un documento en ERROR_EXTRACCION (p. ej. timeout de Gemini). */
   async retryExtraction(documentId: string, expectedVersion: number): Promise<DocumentoRegistro> {
     const response = await fetch(`${this.options.baseUrl}/documents/${documentId}/retry-extraction`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ expectedVersion }),
+    });
+    if (!response.ok) {
+      const { error, code } = await parseErrorBody(response);
+      throw new DocumentApiError(error, response.status, code);
+    }
+    return (await response.json()) as DocumentoRegistro;
+  }
+
+  /**
+   * Reintenta el preprocesamiento (PyMuPDF/Pillow) para un documento en
+   * ERROR_PREPROCESO (PDF corrupto o con contraseña) — puede seguir fallando si el
+   * archivo original sigue siendo ilegible (422, mismo `code: 'PDF_PREPROCESS_FAILED'`
+   * que POST /documents/upload).
+   */
+  async retryPreprocess(documentId: string, expectedVersion: number): Promise<DocumentoRegistro> {
+    const response = await fetch(`${this.options.baseUrl}/documents/${documentId}/retry-preprocess`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ expectedVersion }),

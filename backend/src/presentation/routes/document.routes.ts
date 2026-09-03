@@ -18,7 +18,10 @@
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 
-import type { DocumentWorkflowOrchestrator } from '../../application/DocumentWorkflowOrchestrator';
+import {
+  PdfPreprocessFailedError,
+  type DocumentWorkflowOrchestrator,
+} from '../../application/DocumentWorkflowOrchestrator';
 import type { IDocumentRepository, RepositoryErrorCode } from '../../contracts/IDocumentRepository';
 import type { IFileStorageProvider } from '../../contracts/IFileStorageProvider';
 import type { DocumentoRegistro } from '../../contracts/types';
@@ -29,9 +32,11 @@ import {
   ErrorReplySchema,
   ListDocumentsQuerystringSchema,
   ListDocumentsReplySchema,
+  PreprocessFailedReplySchema,
   RelatedDocumentsQuerystringSchema,
   RelatedDocumentsReplySchema,
   RetryExtractionBodySchema,
+  RetryPreprocessBodySchema,
   RetryRpaBodySchema,
   UploadAcceptedReplySchema,
   UploadQuerystringSchema,
@@ -141,7 +146,10 @@ export const documentRoutes: FastifyPluginAsync<DocumentRoutesOptions> = async (
         return reply.code(404).send({ error: 'Documento no encontrado', code: 'DOCUMENT_NOT_FOUND' });
       }
       const bytes = await storage.readFile(document.rutaArchivoActual);
-      return reply.header('Content-Type', 'application/pdf').header('Cache-Control', 'private, max-age=60').send(Buffer.from(bytes));
+      return reply
+        .header('Content-Type', 'application/pdf')
+        .header('Cache-Control', 'private, max-age=60')
+        .send(Buffer.from(bytes));
     },
   });
 
@@ -153,12 +161,20 @@ export const documentRoutes: FastifyPluginAsync<DocumentRoutesOptions> = async (
     url: '/documents/upload',
     schema: {
       querystring: UploadQuerystringSchema,
-      response: { 202: UploadAcceptedReplySchema, 400: ErrorReplySchema, 409: ErrorReplySchema, 413: ErrorReplySchema },
+      response: {
+        202: UploadAcceptedReplySchema,
+        400: ErrorReplySchema,
+        409: ErrorReplySchema,
+        413: ErrorReplySchema,
+        422: PreprocessFailedReplySchema,
+      },
     },
     handler: async (request, reply) => {
       const filePart = await request.file();
       if (!filePart) {
-        return reply.code(400).send({ error: 'No se recibió ningún archivo (campo multipart esperado).', code: 'NO_FILE' });
+        return reply
+          .code(400)
+          .send({ error: 'No se recibió ningún archivo (campo multipart esperado).', code: 'NO_FILE' });
       }
       if (filePart.mimetype !== 'application/pdf' && !filePart.filename.toLowerCase().endsWith('.pdf')) {
         return reply.code(400).send({ error: 'Solo se aceptan oficios en formato PDF.', code: 'INVALID_MIME_TYPE' });
@@ -183,6 +199,15 @@ export const documentRoutes: FastifyPluginAsync<DocumentRoutesOptions> = async (
         });
       } catch (error) {
         request.log.error({ err: error }, 'Fallo al ingerir oficio');
+        if (error instanceof PdfPreprocessFailedError) {
+          // El registro ERROR_PREPROCESO ya quedó persistido y el archivo aislado en
+          // storage/04_errores/ (ver DocumentWorkflowOrchestrator.recordPreprocessFailure)
+          // — se devuelve 422 con el documentId para que la UI navegue directo a él en
+          // vez de mostrar solo un mensaje de error suelto.
+          return reply
+            .code(422)
+            .send({ error: error.message, code: 'PDF_PREPROCESS_FAILED', details: { documentId: error.documentId } });
+        }
         if (error instanceof Error && /duplicado/i.test(error.message)) {
           return reply.code(409).send({ error: error.message, code: 'DUPLICATE_DOCUMENT_HASH' });
         }
@@ -294,6 +319,52 @@ export const documentRoutes: FastifyPluginAsync<DocumentRoutesOptions> = async (
           return reply.code(REPOSITORY_ERROR_STATUS[error.code]).send({ error: error.message, code: error.code });
         }
         if (error instanceof Error && /no encontrado|no está en estado ERROR_EXTRACCION/i.test(error.message)) {
+          return reply.code(409).send({ error: error.message, code: 'INVALID_STATE_FOR_RETRY' });
+        }
+        throw error;
+      }
+    },
+  });
+
+  // -------------------------------------------------------------------
+  // POST /documents/:id/retry-preprocess — reintento de PyMuPDF/Pillow tras
+  // ERROR_PREPROCESO (PDF corrupto o con contraseña). Simetría con retry-extraction y
+  // retry-rpa: antes de esta ruta, ERROR_PREPROCESO no tenía ninguna vía de
+  // recuperación más que volver a subir el archivo desde cero (perdiendo el registro
+  // aislado en storage/04_errores/).
+  // -------------------------------------------------------------------
+  app.route({
+    method: 'POST',
+    url: '/documents/:id/retry-preprocess',
+    schema: {
+      params: DocumentIdParamsSchema,
+      body: RetryPreprocessBodySchema,
+      response: {
+        200: DocumentoRegistroReplySchema,
+        404: ErrorReplySchema,
+        409: ErrorReplySchema,
+        422: PreprocessFailedReplySchema,
+        500: ErrorReplySchema,
+        503: ErrorReplySchema,
+      },
+    },
+    handler: async (request, reply) => {
+      const { id } = request.params;
+      const { expectedVersion } = request.body;
+
+      try {
+        const updated = await orchestrator.retryPreprocess(id, expectedVersion);
+        return reply.code(200).send(updated as DocumentoRegistro);
+      } catch (error) {
+        if (error instanceof PdfPreprocessFailedError) {
+          return reply
+            .code(422)
+            .send({ error: error.message, code: 'PDF_PREPROCESS_FAILED', details: { documentId: error.documentId } });
+        }
+        if (isTypedRepositoryError(error)) {
+          return reply.code(REPOSITORY_ERROR_STATUS[error.code]).send({ error: error.message, code: error.code });
+        }
+        if (error instanceof Error && /no encontrado|no está en estado ERROR_PREPROCESO/i.test(error.message)) {
           return reply.code(409).send({ error: error.message, code: 'INVALID_STATE_FOR_RETRY' });
         }
         throw error;

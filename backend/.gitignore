@@ -3,6 +3,9 @@ dist/
 data/
 .env
 *.log
+.venv/
+__pycache__/
+*.pyc
 
 storage/01_entrada/*
 storage/02_en_proceso/*

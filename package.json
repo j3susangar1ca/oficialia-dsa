@@ -15,6 +15,21 @@
     "build:backend": "npm run build --workspace=backend",
     "typecheck:backend": "npm run typecheck --workspace=backend",
     "check:frontend": "npm run check --workspace=frontend",
-    "typecheck": "npm run typecheck:backend && npm run check:frontend"
+    "typecheck": "npm run typecheck:backend && npm run check:frontend",
+    "lint": "eslint backend/src frontend/src",
+    "lint:fix": "eslint backend/src frontend/src --fix",
+    "format": "prettier --write \"backend/src/**/*.ts\" \"frontend/src/**/*.{ts,svelte}\" \"*.{js,mjs,json}\"",
+    "format:check": "prettier --check \"backend/src/**/*.ts\" \"frontend/src/**/*.{ts,svelte}\" \"*.{js,mjs,json}\""
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.9.1",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-svelte": "^3.23.0",
+    "globals": "^17.12.0",
+    "prettier": "^3.9.6",
+    "prettier-plugin-svelte": "^4.1.1",
+    "svelte-eslint-parser": "^1.8.1",
+    "typescript-eslint": "^8.69.0"
   }
 }

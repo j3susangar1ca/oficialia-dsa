@@ -146,7 +146,9 @@ export class SqliteDocumentRepository implements IDocumentRepository {
     this.db.exec(fs.readFileSync(schemaPath, 'utf-8'));
 
     const embeddingsSchemaPath =
-      options.embeddingsSchemaPath === null ? null : (options.embeddingsSchemaPath ?? path.resolve(__dirname, 'embeddings_schema.sql'));
+      options.embeddingsSchemaPath === null
+        ? null
+        : (options.embeddingsSchemaPath ?? path.resolve(__dirname, 'embeddings_schema.sql'));
     if (embeddingsSchemaPath) {
       this.db.exec(fs.readFileSync(embeddingsSchemaPath, 'utf-8'));
     }
@@ -205,11 +207,17 @@ export class SqliteDocumentRepository implements IDocumentRepository {
           });
       } catch (cause) {
         if (this.isUniqueConstraintViolation(cause, 'sha256_hash')) {
-          throw new SqliteRepositoryError('DUPLICATE_DOCUMENT_HASH', `Ya existe un documento con hash ${document.sha256Hash}.`, {
-            cause,
-          });
+          throw new SqliteRepositoryError(
+            'DUPLICATE_DOCUMENT_HASH',
+            `Ya existe un documento con hash ${document.sha256Hash}.`,
+            {
+              cause,
+            }
+          );
         }
-        throw new SqliteRepositoryError('PERSISTENCE_TRANSACTION_FAILED', 'No se pudo insertar el documento.', { cause });
+        throw new SqliteRepositoryError('PERSISTENCE_TRANSACTION_FAILED', 'No se pudo insertar el documento.', {
+          cause,
+        });
       }
 
       if (document.preproceso) {
@@ -393,12 +401,10 @@ export class SqliteDocumentRepository implements IDocumentRepository {
   ): Promise<Readonly<DocumentoRegistro>> {
     const now = new Date().toISOString();
     const run = this.db.transaction(() => {
-      this.applyVersionedUpdate(
-        id,
-        expectedVersion,
-        `estado = @estado, fecha_finalizacion = @fechaFinalizacion`,
-        { estado: finalStatus, fechaFinalizacion: finalStatus === 'COMPLETADO' ? now : null }
-      );
+      this.applyVersionedUpdate(id, expectedVersion, `estado = @estado, fecha_finalizacion = @fechaFinalizacion`, {
+        estado: finalStatus,
+        fechaFinalizacion: finalStatus === 'COMPLETADO' ? now : null,
+      });
       this.db
         .prepare(
           `INSERT INTO rpa_ejecuciones (
@@ -452,7 +458,12 @@ export class SqliteDocumentRepository implements IDocumentRepository {
    * o DOCUMENT_NOT_FOUND según corresponda cuando `changes === 0`. Debe invocarse siempre
    * dentro de una `db.transaction(...)` para mantener atomicidad con las tablas satélite.
    */
-  private applyVersionedUpdate(id: string, expectedVersion: number, setClause: string, params: Record<string, unknown>): void {
+  private applyVersionedUpdate(
+    id: string,
+    expectedVersion: number,
+    setClause: string,
+    params: Record<string, unknown>
+  ): void {
     const now = new Date().toISOString();
     const result = this.db
       .prepare(
@@ -527,7 +538,9 @@ export class SqliteDocumentRepository implements IDocumentRepository {
   private mustFindById(id: string): Readonly<DocumentoRegistro> {
     const row = this.db.prepare<{ id: string }, DocumentoRow>('SELECT * FROM documentos WHERE id = @id').get({ id });
     if (!row) {
-      throw new SqliteRepositoryError('DOCUMENT_NOT_FOUND', `Documento no encontrado tras la escritura: ${id}`, { documentId: id });
+      throw new SqliteRepositoryError('DOCUMENT_NOT_FOUND', `Documento no encontrado tras la escritura: ${id}`, {
+        documentId: id,
+      });
     }
     return this.assemble(row);
   }
@@ -536,7 +549,9 @@ export class SqliteDocumentRepository implements IDocumentRepository {
     const preproceso = this.db
       .prepare<{ id: string }, PreprocesoRow>('SELECT * FROM preproceso_metadata WHERE documento_id = @id')
       .get({ id: row.id });
-    const rpa = this.db.prepare<{ id: string }, RpaRow>('SELECT * FROM rpa_ejecuciones WHERE documento_id = @id').get({ id: row.id });
+    const rpa = this.db
+      .prepare<{ id: string }, RpaRow>('SELECT * FROM rpa_ejecuciones WHERE documento_id = @id')
+      .get({ id: row.id });
     const sheets = this.db
       .prepare<{ id: string }, SheetsRow>('SELECT * FROM google_sheets_sync WHERE documento_id = @id')
       .get({ id: row.id });

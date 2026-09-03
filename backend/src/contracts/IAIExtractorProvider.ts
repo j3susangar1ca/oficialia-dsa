@@ -82,10 +82,7 @@ export interface IAIExtractorProvider {
    * @performance Depende de la latencia de red del proveedor y del número de páginas enviadas.
    * @sideEffect No persiste datos en servidores externos (conexión en tránsito sin retención).
    */
-  extractFromPages(
-    pages: ReadonlyArray<RenderedPageImage>,
-    hints?: ExtractionHints
-  ): Promise<ExtractionResult>;
+  extractFromPages(pages: ReadonlyArray<RenderedPageImage>, hints?: ExtractionHints): Promise<ExtractionResult>;
 
   /**
    * Realiza un diagnóstico de disponibilidad y conectividad con el proveedor de IA.

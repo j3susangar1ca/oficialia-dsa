@@ -24,14 +24,7 @@
  */
 /// <reference lib="dom" />
 
-import type {
-  Browser,
-  BrowserContext,
-  Page,
-  Frame,
-  Dialog,
-  Response as PlaywrightResponse
-} from 'playwright';
+import type { Browser, BrowserContext, Page, Frame, Dialog, Response as PlaywrightResponse } from 'playwright';
 
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
@@ -43,7 +36,7 @@ import type {
   RpaInjectionPayload,
   RpaExecutionOptions,
   RpaErrorCode,
-  RpaExecutionError as IRpaExecutionError
+  RpaExecutionError as IRpaExecutionError,
 } from '../../contracts/IRpaInjectionProvider';
 
 const INTRANET_DEFAULT_BASE_URL = 'https://sii.hcg.gob.mx/intranet/op_cucs.fwx';
@@ -53,8 +46,7 @@ const FRAME_SELECTOR = 'iframe[src*="op_ningr.fwx"]';
  * Regex para detectar folios institucionales comunes.
  * Ejemplo esperado: HCG-OP-2026-009821
  */
-const FOLIO_REGEX =
-  /(HCG-OP-\d{4}-\d{4,}|[A-Z]{2,}(?:[-/][A-Z0-9]+)*-\d{4}-\d{3,})/;
+const FOLIO_REGEX = /(HCG-OP-\d{4}-\d{4,}|[A-Z]{2,}(?:[-/][A-Z0-9]+)*-\d{4}-\d{3,})/;
 
 type WebixValue = string | number | boolean | null | string[];
 
@@ -128,10 +120,7 @@ export class PlaywrightRpaAdapter implements IRpaInjectionProvider {
   // IRpaInjectionProvider
   // ------------------------------------------------------------------
 
-  async injectDocument(
-    payload: RpaInjectionPayload,
-    options?: RpaExecutionOptions
-  ): Promise<Readonly<RpaEjecucion>> {
+  async injectDocument(payload: RpaInjectionPayload, options?: RpaExecutionOptions): Promise<Readonly<RpaEjecucion>> {
     const executionId = randomUUID();
     return this.executeWithRetries(payload, options, 1, executionId);
   }
@@ -156,7 +145,7 @@ export class PlaywrightRpaAdapter implements IRpaInjectionProvider {
       const page = await context.newPage();
       const response = await page.goto(this.baseUrl, {
         waitUntil: 'domcontentloaded',
-        timeout: 15_000
+        timeout: 15_000,
       });
 
       return Boolean(response && response.status() < 400);
@@ -177,10 +166,7 @@ export class PlaywrightRpaAdapter implements IRpaInjectionProvider {
     baseAttempt: number,
     executionId: string
   ): Promise<Readonly<RpaEjecucion>> {
-    const timeoutMs =
-      options?.timeoutMs ??
-      this.config.defaultActionTimeoutMs ??
-      90_000;
+    const timeoutMs = options?.timeoutMs ?? this.config.defaultActionTimeoutMs ?? 90_000;
 
     const maxRetries = Math.max(1, options?.maxRetries ?? 3);
     const startedAt = Date.now();
@@ -196,18 +182,12 @@ export class PlaywrightRpaAdapter implements IRpaInjectionProvider {
         const page = await context.newPage();
         page.setDefaultTimeout(timeoutMs);
 
-        const result = await this.performInjection(
-          page,
-          payload,
-          executionId,
-          attemptNumber,
-          timeoutMs
-        );
+        const result = await this.performInjection(page, payload, executionId, attemptNumber, timeoutMs);
 
         return {
           ...result,
           intentos: attemptNumber,
-          duracionMs: Date.now() - startedAt
+          duracionMs: Date.now() - startedAt,
         };
       } catch (error) {
         lastError = error;
@@ -245,7 +225,7 @@ export class PlaywrightRpaAdapter implements IRpaInjectionProvider {
     try {
       const response = await page.goto(this.baseUrl, {
         waitUntil: 'domcontentloaded',
-        timeout: timeoutMs
+        timeout: timeoutMs,
       });
 
       this.assertNavigationResponse(response);
@@ -261,12 +241,7 @@ export class PlaywrightRpaAdapter implements IRpaInjectionProvider {
 
       const folio = await this.extractConfirmationFolio(page, dialogs, timeoutMs);
 
-      const capturaAcusePath = await this.saveEvidence(
-        page,
-        executionId,
-        '03_procesados',
-        'acuse'
-      );
+      const capturaAcusePath = await this.saveEvidence(page, executionId, '03_procesados', 'acuse');
 
       // `intentos` y `duracionMs` los añade `executeWithRetries` al desenvolver esta
       // promesa (ahí se conoce el número de intento real y la duración total con
@@ -279,22 +254,14 @@ export class PlaywrightRpaAdapter implements IRpaInjectionProvider {
         fechaEjecucion: new Date().toISOString(),
         capturaAcusePath,
         mensajeError: null,
-        exitoso: true
+        exitoso: true,
       };
     } catch (error) {
-      const screenshotErrorPath = await this.saveEvidence(
-        page,
-        executionId,
-        '04_errores',
-        'error'
-      ).catch(() => undefined);
-
-      throw this.normalizeError(
-        error,
-        attemptNumber,
-        Date.now() - startedAt,
-        screenshotErrorPath
+      const screenshotErrorPath = await this.saveEvidence(page, executionId, '04_errores', 'error').catch(
+        () => undefined
       );
+
+      throw this.normalizeError(error, attemptNumber, Date.now() - startedAt, screenshotErrorPath);
     } finally {
       page.removeListener('dialog', dialogs.handler);
     }
@@ -305,11 +272,7 @@ export class PlaywrightRpaAdapter implements IRpaInjectionProvider {
   // ------------------------------------------------------------------
 
   private get baseUrl(): string {
-    return (
-      this.config.baseUrl ??
-      process.env.INTRANET_BASE_URL ??
-      INTRANET_DEFAULT_BASE_URL
-    );
+    return this.config.baseUrl ?? process.env.INTRANET_BASE_URL ?? INTRANET_DEFAULT_BASE_URL;
   }
 
   private async createBrowserContext(): Promise<BrowserContext> {
@@ -320,22 +283,14 @@ export class PlaywrightRpaAdapter implements IRpaInjectionProvider {
       ignoreHTTPSErrors: true,
       viewport: { width: 1920, height: 1080 },
       locale: 'es-MX',
-      timezoneId: 'America/Mexico_City'
+      timezoneId: 'America/Mexico_City',
     });
   }
 
-  private resolveHttpCredentials():
-    | { username: string; password: string }
-    | undefined {
-    const username =
-      this.config.username ??
-      process.env.INTRANET_HTTP_USERNAME ??
-      process.env.RPA_INTRANET_USER;
+  private resolveHttpCredentials(): { username: string; password: string } | undefined {
+    const username = this.config.username ?? process.env.INTRANET_HTTP_USERNAME ?? process.env.RPA_INTRANET_USER;
 
-    const password =
-      this.config.password ??
-      process.env.INTRANET_HTTP_PASSWORD ??
-      process.env.RPA_INTRANET_PASSWORD;
+    const password = this.config.password ?? process.env.INTRANET_HTTP_PASSWORD ?? process.env.RPA_INTRANET_PASSWORD;
 
     if (!username || !password) {
       return undefined;
@@ -346,56 +301,38 @@ export class PlaywrightRpaAdapter implements IRpaInjectionProvider {
 
   private assertNavigationResponse(response: PlaywrightResponse | null): void {
     if (!response) {
-      throw this.createError(
-        'INTRANET_UNREACHABLE_OR_OFFLINE',
-        'No se recibió respuesta HTTP de la Intranet.'
-      );
+      throw this.createError('INTRANET_UNREACHABLE_OR_OFFLINE', 'No se recibió respuesta HTTP de la Intranet.');
     }
 
     const status = response.status();
 
     if (status === 401) {
-      throw this.createError(
-        'INTRANET_AUTH_FAILED',
-        `Autenticación fallida (HTTP ${status}).`
-      );
+      throw this.createError('INTRANET_AUTH_FAILED', `Autenticación fallida (HTTP ${status}).`);
     }
 
     if (status === 403) {
-      throw this.createError(
-        'SESSION_EXPIRED',
-        `Acceso denegado o sesión expirada (HTTP ${status}).`
-      );
+      throw this.createError('SESSION_EXPIRED', `Acceso denegado o sesión expirada (HTTP ${status}).`);
     }
 
     if (status >= 500) {
-      throw this.createError(
-        'INTRANET_UNREACHABLE_OR_OFFLINE',
-        `Error de servidor en Intranet (HTTP ${status}).`
-      );
+      throw this.createError('INTRANET_UNREACHABLE_OR_OFFLINE', `Error de servidor en Intranet (HTTP ${status}).`);
     }
 
     if (status >= 400) {
-      throw this.createError(
-        'INTRANET_UNREACHABLE_OR_OFFLINE',
-        `Respuesta inesperada de Intranet (HTTP ${status}).`
-      );
+      throw this.createError('INTRANET_UNREACHABLE_OR_OFFLINE', `Respuesta inesperada de Intranet (HTTP ${status}).`);
     }
   }
 
   private async resolveOpNingrFrame(page: Page, timeoutMs: number): Promise<Frame> {
     const iframeHandle = await page.waitForSelector(FRAME_SELECTOR, {
       state: 'attached',
-      timeout: timeoutMs
+      timeout: timeoutMs,
     });
 
     const frame = await iframeHandle.contentFrame();
 
     if (!frame) {
-      throw this.createError(
-        'WEBIX_FORM_TIMEOUT',
-        'No fue posible obtener el contentFrame del iframe op_ningr.fwx.'
-      );
+      throw this.createError('WEBIX_FORM_TIMEOUT', 'No fue posible obtener el contentFrame del iframe op_ningr.fwx.');
     }
 
     return frame;
@@ -405,13 +342,7 @@ export class PlaywrightRpaAdapter implements IRpaInjectionProvider {
     await frame.waitForFunction(
       () => {
         const w = (window as any).webix;
-        return Boolean(
-          w &&
-            typeof w.$$ === 'function' &&
-            w.$$('frm1') &&
-            w.$$('btnGuardar') &&
-            w.$$('cve')
-        );
+        return Boolean(w && typeof w.$$ === 'function' && w.$$('frm1') && w.$$('btnGuardar') && w.$$('cve'));
       },
       undefined,
       { timeout: timeoutMs }
@@ -422,18 +353,12 @@ export class PlaywrightRpaAdapter implements IRpaInjectionProvider {
   // Inyección de datos en Webix
   // ------------------------------------------------------------------
 
-  private async fillWebixForm(
-    frame: Frame,
-    metadata: Readonly<MetadatosOficio>
-  ): Promise<void> {
+  private async fillWebixForm(frame: Frame, metadata: Readonly<MetadatosOficio>): Promise<void> {
     const now = new Date();
 
     const oficialiaCve = await this.resolveOficialiaCve(frame);
     if (!oficialiaCve) {
-      throw this.createError(
-        'WEBIX_FORM_TIMEOUT',
-        'No fue posible resolver la oficialía (campo Webix cve).'
-      );
+      throw this.createError('WEBIX_FORM_TIMEOUT', 'No fue posible resolver la oficialía (campo Webix cve).');
     }
 
     // Campos base del formulario op_ningr.fwx
@@ -443,11 +368,7 @@ export class PlaywrightRpaAdapter implements IRpaInjectionProvider {
     await this.setWebixValue(frame, 'anio_ingr', String(now.getFullYear()));
     await this.setWebixValue(frame, 'nume_cont', metadata.numeroOficio);
 
-    await this.setWebixValue(
-      frame,
-      'fech_ofic',
-      this.formatDate(this.parseIsoDate(metadata.fechaEmision))
-    );
+    await this.setWebixValue(frame, 'fech_ofic', this.formatDate(this.parseIsoDate(metadata.fechaEmision)));
 
     await this.setWebixValue(frame, 'info_sens', metadata.contieneDatosSensibles ? '1' : '0');
     await this.setWebixValue(frame, 'tipo_info', '0');
@@ -477,17 +398,13 @@ export class PlaywrightRpaAdapter implements IRpaInjectionProvider {
     // Tipo de oficio con lógica especial:
     // - plazoDias > 0 => "5" (CON TERMINO)
     // - resto        => "1" (ORIGINAL)
-    const tipoOficio =
-      metadata.plazoDias !== null && metadata.plazoDias > 0 ? '5' : '1';
+    const tipoOficio = metadata.plazoDias !== null && metadata.plazoDias > 0 ? '5' : '1';
 
     await this.setWebixValue(frame, 'tipo_ofic', tipoOficio);
     await this.delay(50);
 
     if (tipoOficio === '5' && metadata.plazoDias !== null && metadata.plazoDias > 0) {
-      const fechaTermino = this.addDays(
-        this.parseIsoDate(metadata.fechaEmision),
-        metadata.plazoDias
-      );
+      const fechaTermino = this.addDays(this.parseIsoDate(metadata.fechaEmision), metadata.plazoDias);
 
       const fechaTerminoStr = this.formatDate(fechaTermino);
 
@@ -495,11 +412,7 @@ export class PlaywrightRpaAdapter implements IRpaInjectionProvider {
       await this.setOptionalWebixValue(frame, 'txtFech_term', fechaTerminoStr);
     }
 
-    await this.setWebixValue(
-      frame,
-      'clase',
-      /INVITACI[ÓO]N/i.test(metadata.asunto) ? '5' : '4'
-    );
+    await this.setWebixValue(frame, 'clase', /INVITACI[ÓO]N/i.test(metadata.asunto) ? '5' : '4');
 
     await this.setWebixValue(frame, 'tipo_ingr', '0');
 
@@ -513,9 +426,7 @@ export class PlaywrightRpaAdapter implements IRpaInjectionProvider {
     await this.setOptionalWebixValue(
       frame,
       'nota',
-      metadata.plazoDias !== null && metadata.plazoDias > 0
-        ? `PLAZO ESTIPULADO: ${metadata.plazoDias} DÍA(S)`
-        : ''
+      metadata.plazoDias !== null && metadata.plazoDias > 0 ? `PLAZO ESTIPULADO: ${metadata.plazoDias} DÍA(S)` : ''
     );
 
     await this.setOptionalWebixValue(frame, 'ligado_a', '');
@@ -525,8 +436,7 @@ export class PlaywrightRpaAdapter implements IRpaInjectionProvider {
     const dependencia = this.cleanText(metadata.dependenciaArea);
 
     if (metadata.procedencia === 'HCG') {
-      const hcgDependenciaCve =
-        this.config.hcgDependenciaCve ?? process.env.RPA_HCG_DEPENDENCIA_CVE;
+      const hcgDependenciaCve = this.config.hcgDependenciaCve ?? process.env.RPA_HCG_DEPENDENCIA_CVE;
 
       if (hcgDependenciaCve) {
         await this.setWebixValue(frame, 'dependen', hcgDependenciaCve);
@@ -564,11 +474,7 @@ export class PlaywrightRpaAdapter implements IRpaInjectionProvider {
     });
   }
 
-  private async setWebixValue(
-    frame: Frame,
-    viewId: string,
-    value: WebixValue
-  ): Promise<void> {
+  private async setWebixValue(frame: Frame, viewId: string, value: WebixValue): Promise<void> {
     await frame.evaluate(
       ([id, val]: [string, WebixValue]) => {
         const w = (window as any).webix;
@@ -592,11 +498,7 @@ export class PlaywrightRpaAdapter implements IRpaInjectionProvider {
     );
   }
 
-  private async setOptionalWebixValue(
-    frame: Frame,
-    viewId: string,
-    value: WebixValue
-  ): Promise<void> {
+  private async setOptionalWebixValue(frame: Frame, viewId: string, value: WebixValue): Promise<void> {
     try {
       await this.setWebixValue(frame, viewId, value);
     } catch {
@@ -604,11 +506,7 @@ export class PlaywrightRpaAdapter implements IRpaInjectionProvider {
     }
   }
 
-  private async setWebixComboByText(
-    frame: Frame,
-    viewId: string,
-    text: string
-  ): Promise<void> {
+  private async setWebixComboByText(frame: Frame, viewId: string, text: string): Promise<void> {
     await frame.evaluate(
       ([id, searchText]: [string, string]) => {
         const w = (window as any).webix;
@@ -651,10 +549,7 @@ export class PlaywrightRpaAdapter implements IRpaInjectionProvider {
     frame: Frame,
     canonicalPdfPath: string
   ): Promise<void> {
-    const candidates = [
-      frame.locator('input[type="file"]').first(),
-      page.locator('input[type="file"]').first()
-    ];
+    const candidates = [frame.locator('input[type="file"]').first(), page.locator('input[type="file"]').first()];
 
     for (const candidate of candidates) {
       const count = await candidate.count();
@@ -666,9 +561,7 @@ export class PlaywrightRpaAdapter implements IRpaInjectionProvider {
         } catch (error) {
           throw this.createError(
             'FILE_UPLOAD_FAILED',
-            `No fue posible adjuntar el PDF canónico: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
+            `No fue posible adjuntar el PDF canónico: ${error instanceof Error ? error.message : String(error)}`,
             1,
             0,
             undefined,
@@ -721,7 +614,7 @@ export class PlaywrightRpaAdapter implements IRpaInjectionProvider {
       folio: null,
       dialogSeen,
       resolveDialog,
-      handler: async () => undefined
+      handler: async () => undefined,
     };
 
     state.handler = async (dialog: Dialog) => {
@@ -741,25 +634,17 @@ export class PlaywrightRpaAdapter implements IRpaInjectionProvider {
     return state;
   }
 
-  private async stabilizeAfterSubmit(
-    page: Page,
-    dialogs: DialogState,
-    timeoutMs: number
-  ): Promise<void> {
+  private async stabilizeAfterSubmit(page: Page, dialogs: DialogState, timeoutMs: number): Promise<void> {
     const waitMs = Math.min(timeoutMs, 2500);
 
     await Promise.race([
       dialogs.dialogSeen,
       page.waitForLoadState('networkidle', { timeout: waitMs }).catch(() => undefined),
-      this.delay(waitMs)
+      this.delay(waitMs),
     ]);
   }
 
-  private async extractConfirmationFolio(
-    page: Page,
-    dialogs: DialogState,
-    timeoutMs: number
-  ): Promise<string> {
+  private async extractConfirmationFolio(page: Page, dialogs: DialogState, timeoutMs: number): Promise<string> {
     const deadline = Date.now() + timeoutMs;
 
     while (Date.now() < deadline) {
@@ -789,9 +674,7 @@ export class PlaywrightRpaAdapter implements IRpaInjectionProvider {
     const candidates: Array<Page | Frame> = [page, ...page.frames()];
 
     for (const candidate of candidates) {
-      const text = await candidate
-        .evaluate(() => document.body?.innerText ?? '')
-        .catch(() => '');
+      const text = await candidate.evaluate(() => document.body?.innerText ?? '').catch(() => '');
 
       const folioFromText = this.parseFolio(text);
       if (folioFromText) {
@@ -830,21 +713,13 @@ export class PlaywrightRpaAdapter implements IRpaInjectionProvider {
     const year = String(now.getFullYear());
     const month = String(now.getMonth() + 1).padStart(2, '0');
 
-    const directory = path.join(
-      process.cwd(),
-      this.config.storageRoot ?? 'storage',
-      stage,
-      year,
-      month
-    );
+    const directory = path.join(process.cwd(), this.config.storageRoot ?? 'storage', stage, year, month);
 
     await mkdir(directory, { recursive: true });
 
     const filePath = path.join(directory, `${prefix}_${uuid}.png`);
 
-    await page
-      .waitForLoadState('networkidle', { timeout: 2500 })
-      .catch(() => undefined);
+    await page.waitForLoadState('networkidle', { timeout: 2500 }).catch(() => undefined);
 
     await page.screenshot({ path: filePath, fullPage: true });
 
@@ -869,7 +744,7 @@ export class PlaywrightRpaAdapter implements IRpaInjectionProvider {
       screenshotErrorPath,
       attemptCount,
       durationMs,
-      cause
+      cause,
     });
   }
 
@@ -886,7 +761,7 @@ export class PlaywrightRpaAdapter implements IRpaInjectionProvider {
         screenshotErrorPath: screenshotErrorPath ?? error.screenshotErrorPath,
         attemptCount,
         durationMs,
-        cause: (error as { cause?: unknown }).cause
+        cause: (error as { cause?: unknown }).cause,
       });
     }
 
@@ -906,7 +781,7 @@ export class PlaywrightRpaAdapter implements IRpaInjectionProvider {
       screenshotErrorPath,
       attemptCount,
       durationMs,
-      cause: error
+      cause: error,
     });
   }
 
@@ -960,10 +835,7 @@ export class PlaywrightRpaAdapter implements IRpaInjectionProvider {
     const message = error instanceof Error ? error.message : String(error);
     const name = (error as { name?: string })?.name ?? '';
 
-    return (
-      name === 'TimeoutError' ||
-      /timeout|net::ERR|ECONN|target closed|frame|webix/i.test(message)
-    );
+    return name === 'TimeoutError' || /timeout|net::ERR|ECONN|target closed|frame|webix/i.test(message);
   }
 
   private parseIsoDate(iso: string): Date {
@@ -973,11 +845,7 @@ export class PlaywrightRpaAdapter implements IRpaInjectionProvider {
       throw this.createError('WEBIX_FORM_TIMEOUT', `Fecha inválida: ${iso}`);
     }
 
-    const date = new Date(
-      Number(match[1]),
-      Number(match[2]) - 1,
-      Number(match[3])
-    );
+    const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
 
     if (Number.isNaN(date.getTime())) {
       throw this.createError('WEBIX_FORM_TIMEOUT', `Fecha inválida: ${iso}`);
@@ -1008,10 +876,7 @@ export class PlaywrightRpaAdapter implements IRpaInjectionProvider {
   }
 
   private cleanText(value: string): string {
-    return value
-      .toUpperCase()
-      .replace(/\s+/g, ' ')
-      .trim();
+    return value.toUpperCase().replace(/\s+/g, ' ').trim();
   }
 
   private delay(ms: number): Promise<void> {

@@ -65,13 +65,20 @@ backend/src/
 | `IPdfProcessorProvider` | `PythonPdfProcessorAdapter` (spawn de `scripts/pdf_worker.py`, PyMuPDF/Pillow) | ✅ Real |
 | `IAIExtractorProvider` | `GeminiAIExtractorAdapter` (`@google/genai`, Gemini 2.5 Flash) | ✅ Real |
 | `IRpaInjectionProvider` | `PlaywrightRpaInjectionAdapter` (default) / `PlaywrightRpaAdapter` (`RPA_MODE=playwright`) | ✅ Real, detrás de flag — ver más abajo |
-| `IExternalSyncProvider` | `GoogleSheetsExternalSyncAdapter` | ⚠️ Placeholder — requiere Service Account de Google |
+| `IExternalSyncProvider` | `GoogleSheetsExternalSyncAdapter` (`googleapis`, Sheets API v4) | ✅ Real, sin credenciales por default — ver más abajo |
 | `ILocalSemanticProvider` (P1) | `LocalSemanticMatcherAdapter` (`@xenova/transformers`, `Xenova/bge-m3`) | ✅ Real, cableado — ver más abajo |
 
-El adaptador de sincronización con Sheets, marcado como placeholder, cumple el contrato
-exactamente (mismos tipos, mismos códigos de error) para que el servidor arranque y el
-pipeline degrade con la sincronización marcada como fallida en vez de romperse.
-Sustituirlo por una implementación real no requiere tocar el orquestador ni las rutas.
+**Google Sheets**: `GoogleSheetsExternalSyncAdapter` es una implementación real (Service
+Account + Sheets API v4), pero se entrega sin credenciales configuradas — sin
+`GOOGLE_SHEETS_SPREADSHEET_ID` en `.env`, `configured` queda en `false` y cada método de
+escritura lanza `ExternalSyncNotConfiguredError` (mismo comportamiento honesto que el
+placeholder original: el orquestador ya trata eso como no bloqueante — el documento se
+completa igual, solo queda marcado como pendiente de sincronizar). Para activarlo: agrega
+`GOOGLE_SHEETS_SPREADSHEET_ID` y, o bien `GOOGLE_SERVICE_ACCOUNT_JSON` (el JSON de la
+Service Account en una línea) o `GOOGLE_APPLICATION_CREDENTIALS` apuntando al archivo —
+ver `.env.example` y el docstring de `GoogleSheetsExternalSyncAdapter.ts` para el layout
+de columnas y los permisos requeridos (Editor sobre la hoja, compartida con el
+`client_email` de la Service Account).
 
 **RPA**: `presentation/server.ts` cablea `PlaywrightRpaInjectionAdapter` por defecto — un
 stub honesto que nunca lanza un navegador y reporta `checkIntranetHealth() === false`.
@@ -81,6 +88,14 @@ activa con `RPA_MODE=playwright` en `.env` (ver `.env.example`), tras
 `npm run rpa:install-browsers` (Chromium de Playwright) y las credenciales/CVEs
 institucionales. No ha sido validada contra la Intranet real — revisar selectores y
 campos antes de usarla en producción.
+
+**Ingesta Dual — watchfolder real (prd.md §2.1)**: `infrastructure/watcher/IncomingFolderWatcher.ts`
+vigila `storage/01_entrada/` por polling (no `fs.watch`/inotify: no es confiable sobre el
+volumen SMB que este mismo directorio puede montar desde el escáner departamental) y
+dispara `ingestAndExtract` con `origen: 'SCANNER_ADF'` automáticamente — antes, ese valor
+de `IngestaOrigen` solo existía como parámetro de query del endpoint HTTP, sin ningún
+proceso observando la carpeta. Se activa siempre que `WATCHFOLDER_ENABLED=true` (default;
+ver `.env.example`).
 
 **Búsqueda semántica local (Puerto 7, P1)**: `docs/prd.md` §2.2 la incluye como Fase
 Complementaria — sugiere al capturista oficios relacionados por similitud semántica
@@ -116,7 +131,7 @@ aún no está listo, degrada a `documentos: []` con `modeloEstado` explícito.
 ### Prerequisites
 
 * Node.js `>= 22.0.0`
-* Python `3.10+` (con librerías `PyMuPDF` y `Pillow` instaladas localmente)
+* Python `3.10+` (con librerías `PyMuPDF` y `Pillow` — versiones fijadas en `backend/scripts/requirements.txt`)
 * Variables de entorno configuradas (`.env` requerido basado en la especificación de `.env.example`)
 
 ### Installation & Build
@@ -125,10 +140,15 @@ aún no está listo, degrada a `documentos: []` con `modeloEstado` explícito.
 # 1. Instalar dependencias del monorepo
 npm install
 
-# 2. Instalar binarios de navegadores para el Worker RPA
+# 2. Instalar dependencias Python del worker de preprocesamiento (venv recomendado)
+python3 -m venv backend/.venv
+source backend/.venv/bin/activate
+pip install -r backend/scripts/requirements.txt
+
+# 3. Instalar binarios de navegadores para el Worker RPA
 npm run rpa:install-browsers --workspace=backend
 
-# 3. Compilar los módulos de backend y frontend
+# 4. Compilar los módulos de backend y frontend
 npm run build:backend
 npm run build --workspace=frontend
 ```
@@ -147,13 +167,23 @@ npm run dev --workspace=frontend
 
 ## 6. Testing & Quality Assurance
 
-La calidad de software se garantiza mediante análisis estático estricto y ejecución de pruebas unitarias sobre los casos de uso.
+La calidad de software se garantiza mediante análisis estático estricto (ESLint +
+Prettier + `tsc`/`svelte-check`) y pruebas unitarias/de integración (Vitest) — todo
+corre en CI (`.github/workflows/ci.yml`) en cada push/PR, en cuatro jobs paralelos.
 
 ```bash
-# Ejecutar verificación de tipos y linter estático (Svelte + TS)
+# Verificación de tipos (Svelte + TS)
 npm run typecheck
 
-# Ejecutar suite de pruebas unitarias y de integración (Vitest)
+# Linter (ESLint, flat config compartida backend+frontend — ver eslint.config.mjs)
+npm run lint          # npm run lint:fix para autocorregir lo que se pueda
+
+# Formato (Prettier)
+npm run format:check  # npm run format para reescribir en sitio
+
+# Suite de pruebas del backend (Vitest) — capa de aplicación, rutas HTTP (fastify.inject),
+# storage (fs real sobre directorio temporal), watchfolder y adaptador de Google Sheets
+# (todos con fakes/fs real, nunca mocks de red real)
 npm run test --workspace=backend
 ```
 
@@ -161,9 +191,24 @@ npm run test --workspace=backend
 
 El despliegue está diseñado para infraestructuras *On-Premises* (LAN hospitalaria / VPN). Carece de exposición a internet pública por seguridad de datos.
 
-1. **Compilación de Artefactos:** Construir los estáticos de `frontend/` y transpilar `backend/` hacia el directorio `dist/`.
+**Opción A — Docker** (`backend/Dockerfile`, `frontend/Dockerfile`, contexto de build =
+raíz del monorepo; ver el docstring de cada Dockerfile para las opciones de build):
+
+```bash
+docker build -f backend/Dockerfile -t oficialia-backend .
+docker build -f frontend/Dockerfile --build-arg VITE_API_BASE_URL=http://<backend-host>:3000 -t oficialia-frontend .
+```
+
+**Opción B — proceso Node/Python directo** (systemd/pm2):
+
+1. **Compilación de Artefactos:** Construir los estáticos de `frontend/` y transpilar `backend/` hacia el directorio `dist/` (`npm run build:backend` también copia `schema.sql`/`embeddings_schema.sql` a `dist/` — ver `backend/scripts/copy-build-assets.js`; sin eso, `node dist/presentation/server.js` crashea al arrancar).
 2. **Ejecución de Servicios:** Ejecutar `node dist/presentation/server.js` gestionado por un daemon (e.g., `systemd` o `pm2`).
-3. **Persistencia de Archivos:** El árbol de directorios `storage/01_entrada/` debe compartirse a través del protocolo SMB para permitir la ingesta directa desde escáneres departamentales.
+3. **Persistencia de Archivos:** El árbol de directorios `storage/01_entrada/` debe compartirse a través del protocolo SMB para permitir la ingesta directa desde escáneres departamentales — `IncomingFolderWatcher` lo vigila por polling (ver §3).
+
+**CI**: `.github/workflows/ci.yml` corre `typecheck`/`test`/`lint` (backend), `svelte-check`
+(frontend), `format:check` (Prettier) y un smoke test del worker Python (instala
+`requirements.txt` en un venv limpio y ejecuta `pdf_worker.py inspect` sobre un PDF
+generado en el momento) en cada push/PR.
 
 ## 8. API / Interface Reference
 

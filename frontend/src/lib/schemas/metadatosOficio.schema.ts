@@ -13,7 +13,7 @@
 
 import { z } from 'zod';
 
-const FOLIO_RESERVED_CHARS_RE = /[\/\\:*?"<>|]/g;
+const FOLIO_RESERVED_CHARS_RE = /[/\\:*?"<>|]/g;
 
 export const ProcedenciaSchema = z.enum(['HCG', 'Ajena']);
 

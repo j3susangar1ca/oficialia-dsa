@@ -29,6 +29,28 @@ export interface AppEnv {
   rpaMode: RpaMode;
   /** Navegador Playwright visible (para depuración) cuando `rpaMode === 'playwright'`. */
   rpaHeadless: boolean;
+  /**
+   * Habilita `IncomingFolderWatcher` (vigilancia de `storage/01_entrada/` para la
+   * ingesta SCANNER_ADF, prd.md §2.1). Default `true` — se puede apagar en despliegues
+   * donde el volumen del escáner aún no está montado, o en tests.
+   */
+  watchfolderEnabled: boolean;
+  /** Intervalo de poll del watchfolder, en ms (ver docstring de IncomingFolderWatcher sobre por qué polling y no fs.watch). */
+  watchfolderPollIntervalMs: number;
+  /** Tiempo sin cambios de tamaño/mtime para considerar un archivo del watchfolder "estable" y listo para ingerir. */
+  watchfolderStableForMs: number;
+  /**
+   * Config de `GoogleSheetsExternalSyncAdapter` (puerto `IExternalSyncProvider`). Sin
+   * `googleSheetsSpreadsheetId`, el adaptador queda `configured === false` y todo
+   * método de escritura lanza `ExternalSyncNotConfiguredError` (ver su docstring) —
+   * el orquestador ya trata eso como no bloqueante.
+   */
+  googleSheetsSpreadsheetId: string | undefined;
+  googleSheetsSheetName: string | undefined;
+  googleServiceAccountJson: string | undefined;
+  /** Máximo de requests por IP dentro de `rateLimitWindowMs` (`@fastify/rate-limit`). */
+  rateLimitMax: number;
+  rateLimitWindowMs: number;
 }
 
 function readNumber(name: string, fallback: number): number {
@@ -56,5 +78,17 @@ export function loadEnv(): AppEnv {
     maxUploadBytes: readNumber('MAX_UPLOAD_BYTES', 25 * 1024 * 1024), // 25 MB por oficio
     rpaMode: process.env.RPA_MODE === 'playwright' ? 'playwright' : 'stub',
     rpaHeadless: readBoolean('RPA_HEADLESS', true),
+    watchfolderEnabled: readBoolean('WATCHFOLDER_ENABLED', true),
+    watchfolderPollIntervalMs: readNumber('WATCHFOLDER_POLL_INTERVAL_MS', 5_000),
+    watchfolderStableForMs: readNumber('WATCHFOLDER_STABLE_FOR_MS', 4_000),
+    googleSheetsSpreadsheetId: process.env.GOOGLE_SHEETS_SPREADSHEET_ID || undefined,
+    googleSheetsSheetName: process.env.GOOGLE_SHEETS_SHEET_NAME || undefined,
+    googleServiceAccountJson: process.env.GOOGLE_SERVICE_ACCOUNT_JSON || undefined,
+    // Generoso por defecto: LAN hospitalaria con pocas decenas de capturistas
+    // concurrentes (prd.md §5, "arquitectura estrictamente para LAN hospitalaria/VPN"),
+    // no un servicio público — el objetivo es frenar un bucle desbocado del cliente o un
+    // abuso trivial, no limitar el uso normal.
+    rateLimitMax: readNumber('RATE_LIMIT_MAX', 300),
+    rateLimitWindowMs: readNumber('RATE_LIMIT_WINDOW_MS', 60_000),
   };
 }
