@@ -116,7 +116,7 @@ aún no está listo, degrada a `documentos: []` con `modeloEstado` explícito.
 ### Prerequisites
 
 * Node.js `>= 22.0.0`
-* Python `3.10+` (con librerías `PyMuPDF` y `Pillow` instaladas localmente)
+* Python `3.10+` (con librerías `PyMuPDF` y `Pillow` — versiones fijadas en `backend/scripts/requirements.txt`)
 * Variables de entorno configuradas (`.env` requerido basado en la especificación de `.env.example`)
 
 ### Installation & Build
@@ -125,10 +125,15 @@ aún no está listo, degrada a `documentos: []` con `modeloEstado` explícito.
 # 1. Instalar dependencias del monorepo
 npm install
 
-# 2. Instalar binarios de navegadores para el Worker RPA
+# 2. Instalar dependencias Python del worker de preprocesamiento (venv recomendado)
+python3 -m venv backend/.venv
+source backend/.venv/bin/activate
+pip install -r backend/scripts/requirements.txt
+
+# 3. Instalar binarios de navegadores para el Worker RPA
 npm run rpa:install-browsers --workspace=backend
 
-# 3. Compilar los módulos de backend y frontend
+# 4. Compilar los módulos de backend y frontend
 npm run build:backend
 npm run build --workspace=frontend
 ```

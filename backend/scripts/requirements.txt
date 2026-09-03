@@ -1,0 +1,15 @@
+# SISTEMA OFICIALIA-DIGITAL-DSA
+# Dependencias del worker CLI de preprocesamiento (pdf_worker.py)
+#
+# Antes de este archivo, PyMuPDF y Pillow solo se mencionaban en prosa (README.md,
+# docs/prd.md) sin versiones fijadas — no había forma reproducible de instalar el
+# entorno Python que backend/src/infrastructure/pdf/PythonPdfProcessorAdapter.ts invoca
+# por subproceso. Versiones verificadas contra pdf_worker.py (inspect/sanitize/render)
+# en Python 3.11.
+#
+# Instalación (ver también README.md §5 "Getting Started"):
+#   python3 -m venv .venv && source .venv/bin/activate   # o el venv que prefieras
+#   pip install -r backend/scripts/requirements.txt
+
+pymupdf==1.26.7
+pillow==11.3.0
