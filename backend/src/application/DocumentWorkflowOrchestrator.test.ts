@@ -7,7 +7,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 
-import { DocumentWorkflowOrchestrator, PdfPreprocessFailedError } from './DocumentWorkflowOrchestrator';
+import {
+  DocumentWorkflowOrchestrator,
+  PdfPreprocessFailedError,
+  type WorkflowLogger,
+} from './DocumentWorkflowOrchestrator';
 
 import type {
   DocumentoRegistro,
@@ -149,6 +153,7 @@ describe('DocumentWorkflowOrchestrator', () => {
   let semanticProvider: Omit<Mocked<ILocalSemanticProvider>, 'modeloEstado'> & {
     modeloEstado: ILocalSemanticProvider['modeloEstado'];
   };
+  let logger: Mocked<WorkflowLogger>;
 
   const pdfBuffer = new Uint8Array([1, 2, 3]);
 
@@ -370,6 +375,8 @@ describe('DocumentWorkflowOrchestrator', () => {
     } satisfies ResultadoBusquedaSemantica);
     semanticProvider.countEmbeddings.mockReturnValue(0);
 
+    logger = { warn: vi.fn(), error: vi.fn() };
+
     orchestrator = new DocumentWorkflowOrchestrator(
       storage as unknown as IFileStorageProvider,
       repository as unknown as IDocumentRepository,
@@ -378,7 +385,8 @@ describe('DocumentWorkflowOrchestrator', () => {
       rpa as unknown as IRpaInjectionProvider,
       externalSync as unknown as IExternalSyncProvider,
       undefined, // WorkflowEventsListener — no usado en esta suite
-      semanticProvider as unknown as ILocalSemanticProvider
+      semanticProvider as unknown as ILocalSemanticProvider,
+      logger
     );
 
     // Silencia el console.error del orquestador durante el escenario de duplicado /
@@ -669,9 +677,8 @@ describe('DocumentWorkflowOrchestrator', () => {
   // ------------------------------------------------------------------
 
   it('debe mover el archivo a 04_errores/ y persistir esa ruta al fallar la extracción por IA', async () => {
-    aiExtractor.extractFromPages.mockRejectedValue(
-      new Error('La inferencia excedió el límite de 45000 ms sin respuesta del proveedor.')
-    );
+    const extractionError = new Error('La inferencia excedió el límite de 45000 ms sin respuesta del proveedor.');
+    aiExtractor.extractFromPages.mockRejectedValue(extractionError);
     storage.moveToError.mockResolvedValue('storage/04_errores/doc-1.pdf');
 
     await orchestrator.ingestAndExtract('SCAN_20260901_0042.pdf', 'SCANNER_ADF', pdfBuffer);
@@ -685,6 +692,16 @@ describe('DocumentWorkflowOrchestrator', () => {
         'ERROR_EXTRACCION',
         expect.any(Number),
         'storage/04_errores/doc-1.pdf'
+      )
+    );
+
+    // Regresión: antes de este fix, un fallo en `continueExtractionInBackground` (render
+    // fallido o rechazo de Gemini) solo quedaba como estado ERROR_EXTRACCION en SQLite y
+    // un evento WebSocket efímero — la causa real nunca llegaba a la consola del backend.
+    await vi.waitFor(() =>
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.stringContaining('doc-1'),
+        expect.objectContaining({ documentId: 'doc-1', error: extractionError })
       )
     );
   });
@@ -876,6 +893,14 @@ describe('DocumentWorkflowOrchestrator', () => {
 
       // No debe haber continuado hacia extracción de IA.
       expect(aiExtractor.extractFromPages).not.toHaveBeenCalled();
+
+      // Regresión: `reason` (el resumen "CODIGO :: mensaje") sí llegaba al llamador vía
+      // PdfPreprocessFailedError, pero la causa original (con stack) no quedaba en ningún
+      // log — este assert cubre que ahora sí se registra antes de perderse.
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.stringContaining('CORRUPTED_PDF_STRUCTURE'),
+        expect.objectContaining({ fileName: 'CORRUPTO.pdf', cause: preprocessError })
+      );
     });
 
     it('no debe crear un segundo registro si el mismo archivo corrupto (mismo hash) se reintenta subir', async () => {

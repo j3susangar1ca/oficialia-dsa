@@ -145,6 +145,15 @@ export async function buildServer() {
   // arranque del servidor ni bloquea el health-check.
   const semanticProvider = new LocalSemanticMatcherAdapter(repository.getRawDatabase());
 
+  // Adaptador de `fastify.log` (pino) reutilizado tanto por el orquestador (ver docstring
+  // de `WorkflowLogger` — antes un ERROR_EXTRACCION/ERROR_PREPROCESO no dejaba rastro
+  // alguno en la terminal) como por `IncomingFolderWatcher` más abajo.
+  const watcherLogger: WatcherLogger = {
+    info: (msg, meta) => (meta === undefined ? fastify.log.info(msg) : fastify.log.info({ meta }, msg)),
+    warn: (msg, meta) => (meta === undefined ? fastify.log.warn(msg) : fastify.log.warn({ meta }, msg)),
+    error: (msg, meta) => (meta === undefined ? fastify.log.error(msg) : fastify.log.error({ meta }, msg)),
+  };
+
   const orchestrator = new DocumentWorkflowOrchestrator(
     storage,
     repository,
@@ -153,18 +162,14 @@ export async function buildServer() {
     rpaInjection,
     externalSync,
     eventsHub, // WorkflowEventsListener — retransmite el avance por WebSocket
-    semanticProvider
+    semanticProvider,
+    watcherLogger // WorkflowLogger — persiste en consola la causa real de un fallo
   );
 
   // Ingesta SCANNER_ADF (prd.md §2.1, "Ingesta Dual"): vigila storage/01_entrada/ por
   // polling y dispara orchestrator.ingestAndExtract automáticamente — ver docstring de
   // IncomingFolderWatcher sobre por qué polling (no fs.watch) y cómo evita
   // reingerir archivos depositados por la ruta HTTP de Drag & Drop.
-  const watcherLogger: WatcherLogger = {
-    info: (msg, meta) => (meta === undefined ? fastify.log.info(msg) : fastify.log.info({ meta }, msg)),
-    warn: (msg, meta) => (meta === undefined ? fastify.log.warn(msg) : fastify.log.warn({ meta }, msg)),
-    error: (msg, meta) => (meta === undefined ? fastify.log.error(msg) : fastify.log.error({ meta }, msg)),
-  };
   const incomingFolderWatcher = new IncomingFolderWatcher({
     storageRoot: env.storageRoot,
     orchestrator,
